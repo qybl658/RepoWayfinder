@@ -1,0 +1,4 @@
+﻿这里集中保存每次生成的 AI 失败分析 Markdown 副本。
+
+同一份分析仍会保留在对应的 reports\<本次部署目录>\ai_failure_analysis.md。
+发送给 AI 前，请快速搜索 key、token、sk-，确认没有需要保密的内容。
