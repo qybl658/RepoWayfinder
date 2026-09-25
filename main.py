@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from urllib.request import getproxies
 
 import mainline_recovery
+import integration_targets
 
 def configure_console_encoding() -> None:
     for stream in (sys.stdout, sys.stderr):
@@ -185,6 +186,8 @@ class DeploymentReport:
     environment_changes: list[dict[str, Any]] = field(default_factory=list)
     repo_path: str = ""
     plan: dict[str, Any] = field(default_factory=dict)
+    integration_candidates: list[dict[str, str]] = field(default_factory=list)
+    integration_results: list[dict[str, str]] = field(default_factory=list)
     attempts: list[dict[str, Any]] = field(default_factory=list)
     repairs: list[dict[str, Any]] = field(default_factory=list)
     prerequisites: list[dict[str, Any]] = field(default_factory=list)
@@ -3433,6 +3436,8 @@ GUIDE_SECTION_PATTERNS = [
 
 
 def determine_outcome_level(report: DeploymentReport) -> str:
+    if report.action == "INTEGRATE":
+        return "configuration_verified" if report.deployment_success else "integration_waiting"
     if report.action == "WAITING_ENVIRONMENT":
         return "environment_waiting"
     if report.action == "BLOCKED_SECURITY":
@@ -3463,6 +3468,10 @@ def declared_cli_primary_action(report: DeploymentReport) -> str:
 
 def determine_primary_next_action(report: DeploymentReport) -> str:
     level = determine_outcome_level(report)
+    if level == "configuration_verified":
+        return "打开已配置的目标软件，在新会话中确认所安装的扩展或 Skill 可见。"
+    if level == "integration_waiting":
+        return "查看下方每个目标的状态；按提示完成尚需在目标软件里进行的步骤。"
     if level == "environment_waiting":
         return "完成报告中指出的环境步骤后，双击 `继续部署这个项目.bat` 从同一报告继续。"
     if level == "security_blocked":
@@ -4491,8 +4500,48 @@ def reviewed_execution_plan(data: Any, repo: RepoInfo, checkout: Path) -> Execut
     return plan
 
 
+def integrate_repo_artifacts(repo: RepoInfo, checkout: Path, report: DeploymentReport,
+                             candidates: list[dict[str, str]], required_config: list[Any],
+                             install_vsix: bool = False) -> DeploymentReport:
+    """Use explicit host adapters instead of inventing a shell deployment plan."""
+    report.action = "INTEGRATE"
+    report.plan = {"action": "INTEGRATE", "steps": [], "source": "host_adapters", "reason": "Recognized host-dependent artifact"}
+    report.integration_candidates = candidates
+    report.plan_evidence = capture_plan_evidence(checkout, ExecutionPlan("LEARN", [], "Host integration", "host_adapters"))
+    report.progress_phase = "host_detection"
+    report.security_review = review_repository_security(checkout, ExecutionPlan("LEARN", [], "Host integration", "host_adapters"), report.deployment_mode)
+    if report.security_review.get("blocked"):
+        report.action = "BLOCKED_SECURITY"
+        report.reason = "Repository review blocked installation into a host application."
+        report.success = True
+        report.progress_phase = "security_review_blocked"
+    else:
+        hosts = integration_targets.detect_hosts()
+        if (not install_vsix and "vscode" in hosts and reposcout_interactive()
+                and any(item["kind"] == "vscode_extension" and item["source"].lower().endswith(".vsix") for item in candidates)):
+            install_vsix = prompt_yes_no(ui_text("发现 VSIX 扩展包。检查来源后，要让 VS Code 安装并回查吗？", "A VSIX package was found. After checking its source, install and verify it in VS Code?"))
+        report.integration_results = integration_targets.apply_integrations(candidates, hosts, allow_vsix_install=install_vsix)
+        statuses = {item["status"] for item in report.integration_results}
+        report.deployment_success = bool(statuses and statuses <= {"installed", "already_installed", "host_discovered"})
+        report.success = True
+        report.reason = (ui_text("已将可识别内容写入目标软件的发现目录；请在新会话中确认加载。", "Recognized integrations were written to host discovery paths; confirm loading in a new session.")
+                         if report.deployment_success else ui_text("部分接入仍缺目标软件、构建包或软件内操作；详情见 integration_results。", "Some integrations still need a host, package, or user action; see integration_results."))
+        report.progress_phase = "completed" if report.deployment_success else "integration_waiting"
+    report.outcome_level = determine_outcome_level(report)
+    report.primary_next_action = determine_primary_next_action(report)
+    report.beginner_guide = {
+        "title": "把这个项目接入你已有的软件",
+        "outcome_level": report.outcome_level,
+        "primary_next_action": report.primary_next_action,
+        "required_config": required_config,
+        "integration_results": report.integration_results,
+        "start_here": [report.primary_next_action],
+    }
+    return report
+
+
 def deploy_repo(repo: RepoInfo, force_refresh: bool = False, update_existing: bool = False,
-                reviewed_plan: Any = None) -> DeploymentReport:
+                reviewed_plan: Any = None, integration_skill: str = "", install_vsix: bool = False) -> DeploymentReport:
     global ENVIRONMENT_CHANGES
     ENVIRONMENT_CHANGES = []
     report = DeploymentReport(repo=repo.full_name, action="UNKNOWN", success=False, reason="", deployment_mode=ACTIVE_DEPLOYMENT_MODE, ui_language=UI_LANGUAGE)
@@ -4501,6 +4550,18 @@ def deploy_repo(repo: RepoInfo, force_refresh: bool = False, update_existing: bo
         report.repo_path = str(checkout)
         summary = scan_repo(checkout)
         required_config = detect_required_config(checkout)
+        integration_candidates = integration_targets.discover_integrations(checkout, integration_skill)
+        selection = next((item for item in integration_candidates if item["kind"] == "selection_required"), None)
+        if not integration_skill and selection and reposcout_interactive():
+            options = [name.strip() for name in selection.get("available", "").split(",") if name.strip()]
+            log(ui_text("这个仓库有多个 Skill，选一个接入：", "This repository has multiple Skills; choose one:"))
+            for index, name in enumerate(options, 1):
+                log(f"  {index}. {name}")
+            answer = read_visible_input(ui_text("输入编号；直接回车先保存选择清单：", "Enter a number; press Enter to save the list first:"))
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                integration_candidates = integration_targets.discover_integrations(checkout, options[int(answer) - 1])
+        if integration_candidates and reviewed_plan is None:
+            return integrate_repo_artifacts(repo, checkout, report, integration_candidates, required_config, install_vsix)
         plan = (reviewed_execution_plan(reviewed_plan, repo, checkout)
                 if reviewed_plan is not None else ai_execution_plan(repo, checkout, summary))
         action, reason = should_deploy(repo, plan)
@@ -4945,6 +5006,8 @@ def markdown_security_review(report: DeploymentReport) -> str:
     return "\n".join(lines)
 
 def report_status_text(report: DeploymentReport) -> str:
+    if report.action == "INTEGRATE":
+        return "已写入目标软件的发现目录" if report.deployment_success else "部分目标仍待完成"
     if report.deployment_success:
         return "部署成功"
     if report.action == "WAITING_ENVIRONMENT":
@@ -5686,7 +5749,7 @@ def write_failure_analysis_launcher(report: DeploymentReport) -> None:
         return
     if not root_script.exists():
         return
-    if not report.deployment_success and report.action in {"WAITING_ENVIRONMENT", "BLOCKED_SECURITY", "LEARN", "IGNORE"}:
+    if not report.deployment_success and report.action in {"WAITING_ENVIRONMENT", "BLOCKED_SECURITY", "LEARN", "IGNORE", "INTEGRATE"}:
         return
     bat_name = failure_name if project_execution_failed(report) else neutral_name
     bat_path = ARTIFACT_DIR / bat_name
@@ -5749,6 +5812,62 @@ Write-Host "Restored archived venv to: $currentVenv"
     path.write_text(script, encoding="utf-8-sig")
     report.restore_script_path = str(path)
 
+def write_integration_guide(report: DeploymentReport) -> None:
+    """Show target-specific evidence without suggesting a nonexistent demo."""
+    path = ARTIFACT_DIR / "beginner_guide.md"
+    lines = [
+        "# 把项目接入已有软件",
+        "",
+        f"项目：`{report.repo}`",
+        f"状态：{report_status_text(report)}",
+        "",
+        "## 下一步",
+        "",
+        report.primary_next_action,
+        "",
+        "## 各目标结果",
+        "",
+    ]
+    for item in report.integration_results:
+        status = item.get("status", "")
+        if item.get("kind") == "browser_extension" and status == "user_action_required":
+            detail = "打开扩展管理页，开启开发者模式，点“加载已解压的扩展程序”，选择下方源目录。先核对申请权限，加载后确认扩展已启用。"
+        elif item.get("kind") == "browser_extension" and status == "package_required":
+            detail = "扩展源码缺少运行文件，需先按仓库说明构建；本次没有在浏览器里加载。" + item.get("detail", "")
+        elif item.get("kind") == "browser_extension" and status == "unsupported_version":
+            detail = "这个仓库只有 Manifest V2 版本，当前 Chrome 无法加载；需要仓库提供 V3 版本。"
+        elif status == "host_discovered":
+            detail = "目标软件已列出该内容：" + item.get("detail", "")
+        elif status in {"installed", "already_installed"}:
+            detail = "文件已写入或与现有文件一致。打开目标软件的新会话确认可以看到它。"
+        elif status == "dependencies_pending":
+            detail = "Skill 已写入，但还依赖运行包；本次没有把未知依赖装进目标软件。需要先处理：" + item.get("runtime_requirements", "")
+        elif status == "host_missing":
+            detail = "本机没有检测到兼容的目标软件，本次没有写入安装目录。"
+        elif status == "conflict":
+            detail = "同名目录已有不同内容，原文件已保留。" + item.get("detail", "")
+        else:
+            detail = item.get("detail", "")
+        lines.extend([
+            f"### {item.get('name', '项目')} → {item.get('host') or '未检测到目标'}",
+            "",
+            f"状态：`{item.get('status')}`",
+            detail,
+            *([f"目录：`{item['destination']}`"] if item.get("destination") else []),
+            *([f"源目录：`{item['source']}`"] if item.get("source") else []),
+            *([f"扩展管理页：`{item['manage_url']}`"] if item.get("manage_url") else []),
+            *([f"请求权限：`{item['permissions']}`"] if item.get("permissions") else []),
+            "",
+        ])
+    if report.action == "BLOCKED_SECURITY":
+        lines.extend(["风险审查已阻止接入：" + report.reason, ""])
+    if report.beginner_guide.get("required_config"):
+        lines.extend(["## 项目声明的配置项", "", "目标软件可能另需配置这些值；本次没有把仓库中的密钥写入软件全局设置。", "", *[f"- `{key}`" for key in report.beginner_guide["required_config"]], ""])
+    lines.extend(["安装目录中的文件存在，不代表已经在目标软件当前会话加载；请在目标软件中确认。浏览器扩展需要由用户在扩展管理页加载，不能把复制源码当成安装成功。", ""])
+    path.write_text("\n".join(lines), encoding="utf-8-sig")
+    report.beginner_guide_path = str(path)
+
+
 def write_report(report: DeploymentReport, path: Optional[Path] = None) -> None:
     output_path = path or REPORT_PATH
     repo_path = Path(report.repo_path) if report.repo_path else None
@@ -5773,7 +5892,10 @@ def write_report(report: DeploymentReport, path: Optional[Path] = None) -> None:
             report.start_script_path = ""
             report.start_bat_path = ""
             report.demo_venv_path = ""
-        write_beginner_guide_markdown(report)
+        if report.integration_candidates:
+            write_integration_guide(report)
+        else:
+            write_beginner_guide_markdown(report)
     output_path.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2), encoding="utf-8-sig")
     try:
         deployment_history.record_report(HISTORY_PATH, REPORTS_DIR, asdict(report), output_path)
@@ -6002,6 +6124,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-existing", action="store_true", help="Check and update an existing checkout, asking whether to retain the old version")
     parser.add_argument("--report", default="", help="Optional path for JSON deployment report. By default RepoWayfinder creates reports/<timestamp>-<repo>/deployment_result.json")
     parser.add_argument("--plan-file", default="", help="Execute an explicitly reviewed local JSON plan pinned to repo and full Git revision; normal security checks still apply")
+    parser.add_argument("--integration-skill", default="", help="For repositories with many Skills, install exactly this Skill name or relative path")
+    parser.add_argument("--install-vsix", action="store_true", help="Install a reviewed VSIX through the VS Code CLI and verify its extension ID")
     parser.add_argument("--export-report", default="", help="Export a successfully deployed Python project from its saved report")
     parser.add_argument("--bundle-profile", default="", help="Reviewed local JSON bundle profile with entrypoint, runtime, dependencies and source revision")
     parser.add_argument("--bundle-output", default="", help="New output ZIP for --export-report (existing files are preserved)")
@@ -6022,6 +6146,8 @@ def show_deployment_result(report: DeploymentReport, report_path: Optional[Path]
     log(ui_text("部署结果", "Deployment result"))
     if report.action == "WAITING_ENVIRONMENT":
         status = ui_text("等待环境就绪", "Waiting for environment")
+    elif report.action == "INTEGRATE":
+        status = ui_text("已写入目标发现目录，需在软件内确认" if report.deployment_success else "目标接入待完成", "Written to host discovery paths; confirm in host" if report.deployment_success else "Host integration needs action")
     elif report.action == "BLOCKED_SECURITY":
         status = ui_text("风险检查已阻止执行", "Execution blocked by risk review")
     elif report.action in {"LEARN", "IGNORE"}:
@@ -6046,6 +6172,9 @@ def show_deployment_result(report: DeploymentReport, report_path: Optional[Path]
     if report.action == "WAITING_ENVIRONMENT" and report.resume_bat_path:
         log(ui_text("  准备好环境后，打开继续入口：", "  When the environment is ready, open:"))
         log(f"  {report.resume_bat_path}")
+    elif report.action == "INTEGRATE" and report.beginner_guide_path:
+        log(f"  {report.primary_next_action}")
+        log(f"  {report.beginner_guide_path}")
     elif report.deployment_success and report.start_bat_path:
         log(ui_text("  双击启动项目：", "  Start the project:"))
         log(f"  {report.start_bat_path}")
@@ -6165,7 +6294,8 @@ def main() -> int:
     log(f"Run artifact dir: {ARTIFACT_DIR}")
     write_running_status(repo.full_name, "selected repo")
     report = deploy_repo(repo, force_refresh=args.force_refresh, update_existing=args.update_existing,
-                         reviewed_plan=reviewed_plan)
+                         reviewed_plan=reviewed_plan, integration_skill=args.integration_skill,
+                         install_vsix=args.install_vsix)
     report = waiting_environment_handoff(report)
     show_deployment_result(report)
     return 0 if report.success else 1
