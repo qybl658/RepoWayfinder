@@ -11,7 +11,6 @@ while ($true) {
     Write-Host (Get-RepoWayfinderUiText '[2] 语言' '[2] Language')
     Write-Host (Get-RepoWayfinderUiText '[3] AI / API 配置' '[3] AI / API configuration')
     Write-Host (Get-RepoWayfinderUiText '[4] 部署模式' '[4] Deployment mode')
-    Write-Host (Get-RepoWayfinderUiText '[5] DSH 便携版位置' '[5] DSH portable location')
     Write-Host (Get-RepoWayfinderUiText '[0] 返回' '[0] Back')
     $choice = (Read-Host (Get-RepoWayfinderUiText '请输入编号' 'Enter a number')).Trim()
     $script = ''
@@ -22,7 +21,6 @@ while ($true) {
         '2' { $script = 'configure_reposcout_language.ps1' }
         '3' { $script = 'install_reposcout.ps1'; $extra = @('-ConfigOnly','-ForceApiSetup') }
         '4' { $script = 'configure_reposcout_mode.ps1' }
-        '5' { $script = 'run_reposcout.ps1'; $extra = @('-ReturnToCaller','--configure-hosts') }
         default { continue }
     }
     $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $projectDir $script)) + $extra

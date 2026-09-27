@@ -132,22 +132,6 @@ class DiscoveryFeaturesTests(unittest.TestCase):
             self.assertTrue((bundle / "data/Roaming/dsh-desktop/harness/skills/native/SKILL.md").is_file())
             self.assertFalse((bundle / "data/Home/.agents/skills/native").exists())
 
-    def test_portable_setting_preserves_preferences_and_clear_preserves_bundle(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "settings.json"
-            path.write_text('{"ui_language":"en","include_deployed_in_search":true}', encoding="utf-8")
-            bundle = Path(folder) / "bundle"
-            bundle.mkdir()
-            with patch.object(app, "SETTINGS_PATH", path), patch.object(app, "reposcout_interactive", return_value=True), \
-                 patch.object(app.integration_targets, "validate_dsh_bundle", return_value=bundle), \
-                 patch.object(app, "read_visible_input", side_effect=[str(bundle), "-"]):
-                self.assertEqual(app.configure_integration_hosts(), 0)
-                self.assertEqual(app.read_user_settings()["dsh_bundle_path"], str(bundle))
-                self.assertTrue(app.read_user_settings()["include_deployed_in_search"])
-                self.assertEqual(app.configure_integration_hosts(), 0)
-                self.assertEqual(app.read_user_settings(), {"ui_language": "en", "include_deployed_in_search": True})
-            self.assertTrue(bundle.exists())
-
     def test_weekly_selection_uses_displayed_repo_and_noninteractive_only_lists(self):
         rows = [{"repo": "a/first", "description": "Example", "language": "Python", "stars": 10, "created_at": "2026-09-20T00:00:00Z"},
                 {"repo": "b/second", "description": "Example", "language": "Go", "stars": 20, "created_at": "2026-09-21T00:00:00Z"}]

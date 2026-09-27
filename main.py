@@ -4910,7 +4910,7 @@ def integrate_repo_artifacts(repo: RepoInfo, checkout: Path, report: DeploymentR
         report.success = True
         report.progress_phase = "security_review_blocked"
     else:
-        hosts = integration_targets.detect_hosts(dsh_bundle=read_user_settings().get("dsh_bundle_path", ""))
+        hosts = integration_targets.detect_hosts()
         if (not install_vsix and "vscode" in hosts and reposcout_interactive()
                 and any(item["kind"] == "vscode_extension" and item["source"].lower().endswith(".vsix") for item in candidates)):
             install_vsix = prompt_yes_no(ui_text("发现 VSIX 扩展包。检查来源后，要让 VS Code 安装并回查吗？", "A VSIX package was found. After checking its source, install and verify it in VS Code?"))
@@ -6540,32 +6540,6 @@ def waiting_environment_handoff(report: DeploymentReport) -> DeploymentReport:
         print(ui_text("没有识别到明确选择，请输入 1、2 或 3。", "No explicit choice was recognized. Enter 1, 2, or 3."), flush=True)
 
 
-def configure_integration_hosts() -> int:
-    settings = read_user_settings()
-    log(ui_text("DSH 便携版位置：", "DSH portable location: ") + str(settings.get("dsh_bundle_path") or ui_text("未指定", "Not set")))
-    if not reposcout_interactive():
-        return 0
-    log(ui_text("选择我们制作的 DSH 包解压后的文件夹。以后安装 Skill 时，会自动接入这个包。", "Choose your extracted RepoWayfinder DSH bundle. Future Skill installations will target this bundle."))
-    while True:
-        try:
-            answer = read_visible_input(ui_text("粘贴文件夹路径；回车返回；输入 - 清除记录：", "Paste folder path; Enter returns; - clears the saved location: ")).strip().strip('"')
-        except (EOFError, KeyboardInterrupt):
-            return 0
-        if not answer:
-            return 0
-        if answer == "-":
-            settings.pop("dsh_bundle_path", None)
-        else:
-            try:
-                settings["dsh_bundle_path"] = str(integration_targets.validate_dsh_bundle(Path(answer)))
-            except (OSError, ValueError) as exc:
-                log(str(exc))
-                continue
-        write_user_settings(settings)
-        log(ui_text("已保存。", "Saved."))
-        return 0
-
-
 def configure_search_preferences() -> int:
     settings = read_user_settings()
     included = settings.get("include_deployed_in_search") is True
@@ -6713,7 +6687,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--history", action="store_true", help="List previous deployments; optionally select one in an interactive terminal")
     parser.add_argument("--weekly-trending", action="store_true", help="Show recently created GitHub Top 10; optionally choose a project to deploy")
     parser.add_argument("--configure-search", action="store_true", help="Configure whether search includes previously deployed projects")
-    parser.add_argument("--configure-hosts", action="store_true", help="Set or clear the DSH portable bundle location for Skill integration")
     parser.add_argument("--allow-send", action="store_true", help="Allow the guide command to send bounded README content to configured AI")
     parser.add_argument("--deployment-mode", choices=sorted(DEPLOYMENT_MODES), default="", help="Override the saved deployment mode for this fresh run")
     parser.add_argument("--configure-deployment-mode", action="store_true", help="Choose and save the default deployment mode without deploying a project")
@@ -6841,8 +6814,6 @@ def main() -> int:
         except (OSError, ValueError) as exc:
             parser.error(f"Cannot read local reviewed plan: {exc}")
     global REPORT_PATH, ARTIFACT_DIR
-    if args.configure_hosts:
-        return configure_integration_hosts()
     if args.configure_search:
         return configure_search_preferences()
     if args.history:
