@@ -19,6 +19,8 @@
 
 主菜单 **7 本周热门 Top 10** 展示 [GitHub Trending 周榜](https://github.com/trending?since=weekly)前十项，包括本周新增 Star、简介、链接和获取时间。选编号即可继续部署，直接回车返回。命令行也可运行 `python main.py --weekly-trending`。榜单保留 GitHub 原始顺序，读取失败会提示重试。
 
+每个项目显示简短用途介绍。已配置 AI 时，用一次批量请求根据仓库公开简介整理为当前界面语言；未配置或整理失败时显示最多120字的原文。没有原始简介时明确提示，不凭项目名称编造用途。
+
 ## 选择部署路线
 
 项目明确提供多条能启动同一应用的路线时，优先采用本机环境已经就绪的路线，并检查所需运行时版本与 Docker 引擎状态。目前支持核对 Dockerfile 与 README 中的 npm/pnpm/yarn 启动指令或 Procfile 入口。

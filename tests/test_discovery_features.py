@@ -14,6 +14,7 @@ from weekly_trending import parse_weekly_trending
 class DiscoveryFeaturesTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(app, "log"))
+        self.enterContext(patch.object(app, "AI_API_KEY", ""))
 
     def test_expansion_keeps_original_and_rejects_dropped_names(self):
         with patch.object(app, "AI_API_KEY", "test"), patch.object(app, "OpenAI") as factory:
@@ -55,6 +56,25 @@ class DiscoveryFeaturesTests(unittest.TestCase):
         with patch.object(app, "fetch_repo_info", return_value=repo), patch.object(app, "prepare_search_queries") as expand:
             self.assertIs(app.choose_target("a/pdf", 20), repo)
             expand.assert_not_called()
+
+    def test_weekly_introductions_batch_and_safe_fallback(self):
+        rows = [{"repo": "a/one", "description": "Translate text in screenshots."},
+                {"repo": "a/empty", "description": ""},
+                {"repo": "a/long", "description": "Long description " * 30}]
+        with patch.object(app, "AI_API_KEY", "test"), patch.object(app, "OpenAI") as factory:
+            create = factory.return_value.chat.completions.create
+            create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"a/one": "翻译截图中的文字。", "a/empty": "invented", "unknown/repo": "invented", "a/long": "x" * 121})))])
+            descriptions = app.weekly_brief_introductions(rows)
+            self.assertEqual(create.call_count, 1)
+            self.assertEqual(descriptions["a/one"], "翻译截图中的文字。")
+            self.assertNotEqual(descriptions["a/empty"], "invented")
+            self.assertNotIn("unknown/repo", descriptions)
+            self.assertLessEqual(len(descriptions["a/long"]), 120)
+            create.side_effect = TimeoutError("private error")
+            self.assertEqual(app.weekly_brief_introductions(rows)["a/one"], rows[0]["description"])
+        with patch.object(app, "OpenAI") as factory:
+            self.assertEqual(app.weekly_brief_introductions(rows)["a/one"], rows[0]["description"])
+            factory.assert_not_called()
 
     def test_weekly_order_entities_and_missing_metrics(self):
         def article(name, week):
