@@ -6,6 +6,8 @@
 
 ## 开始使用
 
+新下载的项目默认放在 RepoWayfinder 目录下的 `Projects` 文件夹。升级不会自动搬动或删除旧的 `AI Agent` 目录，已有报告仍按记录的原路径打开。
+
 1. 下载仓库 ZIP 并解压，或用 Git 克隆。
 2. 双击 **点我启动RepoWayfinder.bat**。首次运行会检查 Python、Git 和本项目依赖，按提示完成环境准备。
 3. 输入 GitHub 地址、`owner/repo` 或关键词。关键词搜索会显示候选项目供你选择。

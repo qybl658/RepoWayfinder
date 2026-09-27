@@ -25,8 +25,8 @@ $venvDir = Join-Path $projectDir '.reposcout-venv'
 $localEnvPath = Join-Path $projectDir '.reposcout.env'
 $installStatePath = Join-Path $projectDir '.reposcout-install-state.json'
 $reportsDir = Join-Path $projectDir 'reports'
-$targetsDir = Join-Path $projectDir 'AI Agent'
-$ownedTargetsPath = Join-Path $projectDir '.reposcout-owned-targets.json'
+$targetsDir = Join-Path $projectDir 'Projects'
+$ownedTargetsPath = Join-Path $projectDir '.reposcout-owned-projects.json'
 $repoScoutGitDir = Join-Path $projectDir '.reposcout-git'
 $repoScoutPythonDir = Join-Path $projectDir '.reposcout-python'
 $repoScoutToolsDir = Join-Path $projectDir '.reposcout-tools'
@@ -57,11 +57,11 @@ function Confirm-Action([string]$prompt, [bool]$defaultYes=$false) {
 
 function Remove-RepoWayfinderOwnedTargets {
     if (-not (Test-Path -LiteralPath $ownedTargetsPath -PathType Leaf)) {
-        Write-Host (Get-RepoWayfinderUiText '没有可信的目标项目所有权清单；为避免误删，保留 AI Agent。' 'No trusted target ownership manifest exists; preserving AI Agent to avoid deleting user data.')
+        Write-Host (Get-RepoWayfinderUiText '没有可信的目标项目所有权清单；为避免误删，保留 Projects。' 'No trusted target ownership manifest exists; preserving Projects to avoid deleting user data.')
         return
     }
     try { $manifest = Get-Content -LiteralPath $ownedTargetsPath -Raw -Encoding UTF8 | ConvertFrom-Json }
-    catch { Write-Host (Get-RepoWayfinderUiText '目标所有权清单无法读取；保留 AI Agent。' 'Target ownership manifest is unreadable; preserving AI Agent.'); return }
+    catch { Write-Host (Get-RepoWayfinderUiText '目标所有权清单无法读取；保留 Projects。' 'Target ownership manifest is unreadable; preserving Projects.'); return }
     $root = [IO.Path]::GetFullPath($targetsDir).TrimEnd('\')
     foreach ($relative in @($manifest.paths)) {
         if ([string]::IsNullOrWhiteSpace([string]$relative) -or [string]$relative -match '[\\/]' -or [string]$relative -in @('.', '..')) { continue }
@@ -519,7 +519,7 @@ try {
 
     if (-not $KeepReports) {
         Write-Host ''
-        Write-Host (Get-RepoWayfinderUiText 'reports 包含运行日志、教程和报告内 Demo 环境；目标项目位于 AI Agent，另行确认。' 'reports contains logs, guides, and report-local demo environments. Downloaded targets are under AI Agent and are confirmed separately.')
+        Write-Host (Get-RepoWayfinderUiText 'reports 包含运行日志、教程和报告内 Demo 环境；目标项目位于 Projects，另行确认。' 'reports contains logs, guides, and report-local demo environments. Downloaded targets are under Projects and are confirmed separately.')
         if (Confirm-Action (Get-RepoWayfinderUiText '删除 reports 目录？' 'Remove the reports directory?') $false) {
             Remove-ProjectPath $reportsDir (Get-RepoWayfinderUiText 'RepoWayfinder 运行报告' 'RepoWayfinder reports')
         }

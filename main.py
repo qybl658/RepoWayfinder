@@ -49,14 +49,14 @@ except ImportError:
     OpenAI = None
 
 PROJECT_DIR = Path(__file__).resolve().parent
-BASE_DIR = Path(os.getenv("REPOSCOUT_BASE_DIR", PROJECT_DIR / "AI Agent"))
+BASE_DIR = Path(os.getenv("REPOSCOUT_BASE_DIR", PROJECT_DIR / "Projects"))
 REPORTS_DIR = PROJECT_DIR / "reports"
 ARTIFACT_DIR = PROJECT_DIR
 REPORT_PATH = ARTIFACT_DIR / "deployment_result.json"
 PREREQUISITE_STATE_PATH = PROJECT_DIR / ".reposcout-prerequisites.json"
 SETTINGS_PATH = Path(os.getenv("REPOSCOUT_SETTINGS_PATH", PROJECT_DIR / ".reposcout-settings.json"))
 HISTORY_PATH = SETTINGS_PATH.parent / ".reposcout-history.json"
-OWNED_TARGETS_PATH = PROJECT_DIR / ".reposcout-owned-targets.json"
+OWNED_TARGETS_PATH = PROJECT_DIR / ".reposcout-owned-projects.json"
 DEPLOYMENT_MODES = {"protected", "compatible"}
 DEPLOYMENT_MODE_LABELS = {
     "protected": "防护部署（推荐）",

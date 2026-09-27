@@ -33,3 +33,6 @@ coordination/
 handoffs/
 test-assignments/
 test-results/
+
+Projects/
+.reposcout-owned-projects.json
