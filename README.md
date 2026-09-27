@@ -4,6 +4,8 @@
 
 也可以看看 [RepoWayfinder-MB](https://github.com/qybl658/RepoWayfinder-MB)：MoonBit 实现，以及面向 MoonBit 库的离线体验包与 Python 原库接入。
 
+面向 AI Agent 的独立版本：[RepoWayfinder Agent](https://github.com/qybl658/RepoWayfinder-Agent)，通过 MCP 管理固定源码、项目环境和执行证据，并提供原生工具对照的实测数据。
+
 ## 开始使用
 
 新下载的项目默认放在 RepoWayfinder 目录下的 `Projects` 文件夹。升级不会自动搬动或删除旧的 `AI Agent` 目录，已有报告仍按记录的原路径打开。
