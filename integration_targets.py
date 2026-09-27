@@ -110,31 +110,80 @@ def _runtime_requirements(folder: Path) -> str:
     return "; ".join(notes)
 
 
-def is_standalone_app_with_bundled_skills(root: Path, candidates: list[dict[str, str]]) -> bool:
-    """Do not turn an application's bundled Skills into its deployment route.
-
-    A CLI entry point is stronger evidence of an app than the mere presence of
-    nested SKILL.md files. An explicit Skill selection can still use the normal
-    artifact discovery and installation path.
-    """
-    if (not candidates or (root / "SKILL.md").is_file()
-            or any(item["relative"] == "." and item["kind"] == "agent_skill" for item in candidates)
-            or any(item["kind"] not in {"agent_skill", "selection_required"} for item in candidates)):
-        return False
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file() and not pyproject.is_symlink():
+def application_evidence(root: Path) -> list[str]:
+    """Read declared entry points, never import or execute a repository."""
+    evidence: list[str] = []
+    def text(name: str) -> str:
+        path = root / name
         try:
-            if pyproject.stat().st_size <= 1048576:
-                data = tomllib.loads(pyproject.read_text(encoding="utf-8-sig"))
-                project = data.get("project", {})
-                poetry = data.get("tool", {}).get("poetry", {})
-                if (isinstance(project, dict) and (project.get("scripts") or project.get("gui-scripts"))
-                        or isinstance(poetry, dict) and poetry.get("scripts")):
-                    return True
-        except (OSError, ValueError, TypeError):
+            if path.is_symlink() or root.resolve() not in path.resolve().parents or path.stat().st_size > 1048576:
+                return ""
+            return path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            return ""
+    def table(value):
+        return value if isinstance(value, dict) else {}
+    for filename in ("pyproject.toml", "Cargo.toml"):
+        try:
+            data = tomllib.loads(text(filename))
+            if filename == "pyproject.toml":
+                project = table(data.get("project"))
+                poetry = table(table(data.get("tool")).get("poetry"))
+                if any(isinstance(value, dict) and any(isinstance(v, (str, dict)) and v for v in value.values())
+                       for value in (project.get("scripts"), project.get("gui-scripts"), poetry.get("scripts"))):
+                    evidence.append("Python entry point")
+            elif data.get("package") and (data.get("bin") or text("src/main.rs")):
+                evidence.append("Rust application")
+        except (ValueError, TypeError):
             pass
-    package = _read_json(root / "package.json")
-    return bool(package.get("bin"))
+    import configparser
+    config = configparser.ConfigParser(interpolation=None)
+    try:
+        config.read_string(text("setup.cfg"))
+        if any(config.get("options.entry_points", key, fallback="").strip() for key in ("console_scripts", "gui_scripts")):
+            evidence.append("Python setup.cfg entry point")
+    except configparser.Error:
+        pass
+    try:
+        package = table(json.loads(text("package.json") or "{}"))
+    except ValueError:
+        package = {}
+    scripts = table(package.get("scripts"))
+    dependencies = {**table(package.get("dependencies")), **table(package.get("devDependencies"))}
+    if package.get("bin") or (isinstance(scripts.get("start"), str) and scripts["start"].strip()):
+        evidence.append("Node entry point")
+    elif package.get("main") and "electron" in dependencies:
+        evidence.append("Electron entry point")
+    if re.search(r"(?m)^web:\s*\S", text("Procfile")):
+        evidence.append("Procfile web entry point")
+    if text("go.mod") and re.search(r"(?m)^package\s+main\b", text("main.go")):
+        evidence.append("Go application")
+    # A container or Compose file can be tooling for a collection. Treat it as
+    # a competing possible purpose rather than silently making it primary.
+    if text("Dockerfile") or any(text(name) for name in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")):
+        evidence.append("container (purpose needs confirmation)")
+    return evidence
+
+
+def repository_purposes(root: Path, candidates: list[dict[str, str]]) -> list[str]:
+    """Classify the whole checkout before choosing any artifact adapter."""
+    evidence = application_evidence(root)
+    kinds = {item["kind"] for item in candidates}
+    purposes = ["app"] if evidence else []
+    if "browser_extension" in kinds:
+        purposes.append("browser")
+    if "vscode_extension" in kinds:
+        purposes.append("vscode")
+    skills = bool(kinds & {"agent_skill", "selection_required"})
+    root_skill = any(item["kind"] == "agent_skill" and item.get("relative") == "." for item in candidates)
+    strong_app = any("purpose needs confirmation" not in item for item in evidence)
+    if skills and (root_skill or not purposes or (not strong_app and purposes == ["app"])):
+        purposes.append("skills")
+    return purposes or ["app"]
+
+
+def is_standalone_app_with_bundled_skills(root: Path, candidates: list[dict[str, str]]) -> bool:
+    return bool(candidates) and repository_purposes(root, candidates) == ["app"]
 
 
 def discover_integrations(root: Path, selected_skill: str = "") -> list[dict[str, str]]:
@@ -184,6 +233,9 @@ def discover_integrations(root: Path, selected_skill: str = "") -> list[dict[str
         found = matches if len(matches) == 1 else [{"kind": "selection_required", "name": selected_skill, "source": str(root), "relative": ".", "available": ", ".join(item["relative"] for item in found[:30])}]
     elif len(found) > MAX_SKILLS:
         found = [{"kind": "selection_required", "name": "skills", "source": str(root), "relative": ".", "available": ", ".join(item["relative"] for item in found[:30])}]
+
+    if selected_skill:
+        return found
 
     for relative in ("dist/manifest.json", "build/manifest.json", "manifest.json", "extension/manifest.json", "browser-extension/manifest.json", "chrome-extension/manifest.json"):
         path = root / relative

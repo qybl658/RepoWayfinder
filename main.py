@@ -4944,9 +4944,41 @@ def deploy_repo(repo: RepoInfo, force_refresh: bool = False, update_existing: bo
         report.repo_path = str(checkout)
         summary = scan_repo(checkout)
         required_config = detect_required_config(checkout)
-        integration_candidates = integration_targets.discover_integrations(checkout, integration_skill)
-        if not integration_skill and integration_targets.is_standalone_app_with_bundled_skills(checkout, integration_candidates):
-            integration_candidates = []
+        integration_candidates = ([] if reviewed_plan is not None else
+                                  integration_targets.discover_integrations(checkout, integration_skill))
+        if integration_candidates and not integration_skill:
+            purposes = integration_targets.repository_purposes(checkout, integration_candidates)
+            chosen = purposes[0] if len(purposes) == 1 else ""
+            if not chosen:
+                labels = {"app": ui_text("部署主程序（继续检查运行环境和项目配置）", "Deploy the application (check environment and configuration)"),
+                          "skills": ui_text("接入仓库里的 Skill", "Install a Skill from this repository"),
+                          "browser": ui_text("准备浏览器扩展", "Prepare the browser extension"),
+                          "vscode": ui_text("安装编辑器扩展", "Install the editor extension")}
+                log(ui_text("这个仓库包含多种用途，请选择本次要做的事：", "This repository has several possible uses. Choose your task:"))
+                for index, purpose in enumerate(purposes, 1):
+                    log(f"  [{index}] {labels[purpose]}")
+                if reposcout_interactive():
+                    try:
+                        answer = read_visible_input(ui_text("输入编号；回车暂不处理：", "Choose a number; Enter postpones: ")).strip()
+                    except (EOFError, KeyboardInterrupt):
+                        answer = ""
+                    if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(purposes):
+                        chosen = purposes[int(answer) - 1]
+                if not chosen:
+                    report.action = "INTEGRATE"
+                    report.success = True
+                    report.deployment_success = False
+                    report.integration_candidates = integration_candidates
+                    report.integration_results = [{"kind": "repository_purpose", "status": "selection_required",
+                                                   "detail": ", ".join(purposes)}]
+                    report.progress_phase = "integration_waiting"
+                    report.reason = ui_text("等待选择仓库用途；尚未执行或安装任何内容。", "Waiting for repository purpose selection; nothing executed or installed.")
+                    report.primary_next_action = ui_text("重新选择此仓库，选择要部署或接入的内容。", "Select this repository again and choose what to deploy or integrate.")
+                    report.beginner_guide = {"title": report.reason, "primary_next_action": report.primary_next_action}
+                    return report
+            allowed = {"app": set(), "skills": {"agent_skill", "selection_required"},
+                       "browser": {"browser_extension"}, "vscode": {"vscode_extension"}}[chosen]
+            integration_candidates = [item for item in integration_candidates if item["kind"] in allowed]
         selection = next((item for item in integration_candidates if item["kind"] == "selection_required"), None)
         if not integration_skill and selection and reposcout_interactive():
             options = [name.strip() for name in selection.get("available", "").split(",") if name.strip()]
