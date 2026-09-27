@@ -297,7 +297,7 @@ def safe_slug(value: str, fallback: str = "run") -> str:
 
 def create_artifact_dir(label: str) -> Path:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     base = REPORTS_DIR / f"{stamp}-{safe_slug(label)}"
     candidate = base
     suffix = 2
@@ -5305,6 +5305,7 @@ def resume_deployment_report(report_path: Path) -> int:
         report.finished_at = datetime.now(timezone.utc).isoformat()
         write_report(report, resolved)
     show_deployment_result(report, resolved)
+    open_completed_report(report, resolved)
     return return_code
 
 def markdown_bullets(items: list[Any], empty: str = "- 暂无明确项。") -> str:
@@ -6720,6 +6721,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def open_completed_report(report: DeploymentReport, report_path: Optional[Path] = None) -> None:
+    if not report.deployment_success or os.name != "nt" or not reposcout_interactive():
+        return
+    path = Path(report_path or REPORT_PATH).resolve()
+    if not path.is_file():
+        return
+    try:
+        os.startfile(str(path.parent))
+    except OSError:
+        log(ui_text("无法自动打开结果目录，请打开：", "Could not open the results folder: ") + str(path.parent))
+
+
 def show_deployment_result(report: DeploymentReport, report_path: Optional[Path] = None) -> None:
     """Keep the terminal actionable; complete diagnostics remain in the report."""
     log("")
@@ -6893,6 +6906,7 @@ def main() -> int:
                          install_vsix=args.install_vsix)
     report = waiting_environment_handoff(report)
     show_deployment_result(report)
+    open_completed_report(report)
     return 0 if report.success else 1
 
 
