@@ -194,7 +194,17 @@ def _known_executable(command: str, paths: list[Path]) -> str:
     return next((str(path) for path in paths if path.is_file()), "")
 
 
-def detect_hosts(user_home: Path | None = None) -> dict[str, dict[str, str]]:
+def validate_dsh_bundle(path: Path) -> Path:
+    bundle = path.expanduser().resolve()
+    manifest = _read_json(bundle / "PORTABLE-MANIFEST.json")
+    if (manifest.get("app") != "dataelement/dsh-desktop v0.9.2"
+            or not (bundle / "app/DSH Desktop.exe").is_file()
+            or not (bundle / "Start-DSH.ps1").is_file()):
+        raise ValueError("请选择解压后的 RepoWayfinder DSH v0.9.2 便携包目录（内含 Start-DSH.ps1 与 app 文件夹）。")
+    return bundle
+
+
+def detect_hosts(user_home: Path | None = None, dsh_bundle: str = "") -> dict[str, dict[str, str]]:
     home = user_home or Path.home()
     result: dict[str, dict[str, str]] = {}
     program_files = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
@@ -212,6 +222,28 @@ def detect_hosts(user_home: Path | None = None) -> dict[str, dict[str, str]]:
         result["claude"] = {"executable": claude, "skills_dir": str(home / ".claude/skills")}
     if cursor:
         result["cursor"] = {"executable": cursor, "skills_dir": str(home / ".agents/skills"), "native_skills_dir": str(home / ".cursor/skills")}
+    # Domestic agent hosts use their documented discovery roots.
+    for host, commands, paths in (
+        ("codebuddy", ("codebuddy",), [local / "Programs/CodeBuddy/CodeBuddy.exe", local / "Programs/CodeBuddy CN/CodeBuddy CN.exe"]),
+        ("qoder", ("qodercli", "qoder"), [local / "Programs/Qoder/Qoder.exe"]),
+    ):
+        executable = next((found for command in commands if (found := _known_executable(command, paths))), "")
+        if executable:
+            result[host] = {"executable": executable, "skills_dir": str(home / f".{host}/skills")}
+    dsh = _known_executable("dsh", [local / "Programs/DSH Desktop/DSH Desktop.exe", program_files / "DSH Desktop/DSH Desktop.exe"])
+    if dsh:
+        desktop = Path(dsh).name.casefold() == "dsh desktop.exe"
+        dsh_home = (Path(os.environ.get("APPDATA", home / "AppData/Roaming")) / "dsh-desktop/harness"
+                    if desktop else Path(os.environ.get("DSH_HOME", home / ".dsh")))
+        result["dsh"] = {"executable": dsh,
+                         "skills_dir": str(Path(os.environ.get("DSH_AGENTS_HOME", home / ".agents")) / "skills"),
+                         "native_skills_dir": str(dsh_home / "skills")}
+    portable = os.environ.get("REPOWAYFINDER_DSH_BUNDLE", "").strip() or dsh_bundle
+    if portable:
+        bundle = validate_dsh_bundle(Path(portable))
+        executable = bundle / "app/DSH Desktop.exe"
+        result["dsh-portable"] = {"executable": str(executable), "skills_dir": str(bundle / "data/Home/.agents/skills"),
+                                  "native_skills_dir": str(bundle / "data/Roaming/dsh-desktop/harness/skills")}
     if code:
         result["vscode"] = {"executable": code}
     chrome = _known_executable("chrome", [program_files / "Google/Chrome/Application/chrome.exe", Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe", local / "Google/Chrome/Application/chrome.exe"])
@@ -375,6 +407,12 @@ def apply_integrations(candidates: list[dict[str, str]], hosts: dict[str, dict[s
             relative = candidate.get("relative", "")
             if candidate.get("host_hint"):
                 eligible = tuple(candidate["host_hint"].split(","))
+            elif relative.startswith(".codebuddy/"):
+                eligible = ("codebuddy",)
+            elif relative.startswith(".qoder/"):
+                eligible = ("qoder",)
+            elif relative.startswith(".dsh/"):
+                eligible = ("dsh", "dsh-portable")
             elif relative.startswith(".codex/"):
                 eligible = ("codex",)
             elif relative.startswith(".grok/"):
@@ -384,13 +422,13 @@ def apply_integrations(candidates: list[dict[str, str]], hosts: dict[str, dict[s
             elif relative.startswith(".cursor/"):
                 eligible = ("cursor",)
             else:
-                eligible = ("codex", "grok", "claude", "cursor")
+                eligible = ("codex", "grok", "claude", "cursor", "codebuddy", "qoder", "dsh", "dsh-portable")
             targets = [host for host in eligible if host in hosts]
             if not targets:
                 results.append({"kind": kind, "name": candidate["name"], "host": "", "status": "host_missing", "detail": "No compatible installed agent host detected; no Skill copied."})
             for host in targets:
                 target = hosts[host]
-                if relative.startswith((".codex/", ".grok/", ".cursor/")) or (relative.startswith(".claude/") and host == "grok") or (candidate.get("host_hint") and host == "grok"):
+                if relative.startswith((".codex/", ".grok/", ".cursor/", ".dsh/")) or (relative.startswith(".claude/") and host == "grok") or (candidate.get("host_hint") and host == "grok"):
                     target = {**target, "skills_dir": target.get("native_skills_dir", target["skills_dir"])}
                 results.append(_install_skill(candidate, host, target))
         elif kind == "browser_extension":

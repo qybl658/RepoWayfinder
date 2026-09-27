@@ -11,13 +11,27 @@
 3. 输入 GitHub 地址、`owner/repo` 或关键词。关键词搜索会显示候选项目供你选择。
 4. 查看运行结果、使用指南和报告；需要等待环境时，准备好后使用生成的继续入口。
 
+## 搜索与每周热门
+
+输入用途或关键词后，已配置的 AI 会先用一次短请求整理搜索词，再查找项目；界面会显示改写结果。超时、返回格式不正确或没有配置 Key 时使用原输入，改写后没有结果也会尝试原输入。直接输入仓库地址或 GitHub 查询条件时不改写。
+
+主菜单 **7 本周热门 Top 10** 展示 [GitHub Trending 周榜](https://github.com/trending?since=weekly)前十项，包括本周新增 Star、简介、链接和获取时间。选编号即可继续部署，直接回车返回。命令行也可运行 `python main.py --weekly-trending`。榜单保留 GitHub 原始顺序，读取失败会提示重试。
+
+## 选择部署路线
+
+项目明确提供多条能启动同一应用的路线时，优先采用本机环境已经就绪的路线，并检查所需运行时版本与 Docker 引擎状态。目前支持核对 Dockerfile 与 README 中的 npm/pnpm/yarn 启动指令或 Procfile 入口。
+
+如果都需要准备环境，会说明各条路线的用途、缺少什么和准备差异，再让你选。Docker 会明确提示 Docker Desktop/WSL2、虚拟化、许可及可能重启等额外步骤。暂不选择会保存进度，可从报告继续。通过 `--plan-file` 指定的受审方案保持原路线。
+
 ## 接入已有软件
 
 有些 GitHub 仓库不是独立程序，而是装进别的软件的内容。RepoWayfinder 会识别仓库中的 Agent Skill、浏览器扩展和 VS Code 扩展，再检测本机是否有兼容的目标软件。
 
-- Skill：支持接入已安装的 Codex、Grok、Claude Code 和 Cursor。写入前会检查同名目录；不同内容不会覆盖。Grok 还会通过 `grok inspect` 检查是否发现了新 Skill。热门合集可在提示中选一个，或用 `--integration-skill <名称或仓库内目录>` 指定。
+- Skill：支持接入已安装的 Codex、Grok、Claude Code、Cursor、DSH、CodeBuddy 和 Qoder。写入前会检查同名目录；不同内容不会覆盖。Grok 还会通过 `grok inspect` 检查是否发现了新 Skill。热门合集可在提示中选一个，或用 `--integration-skill <名称或仓库内目录>` 指定。
 - Chrome/Edge 扩展：显示项目源码目录、申请的权限和扩展管理页。浏览器要求由用户在管理页开启开发者模式并加载未打包扩展；报告会保留待完成状态，不会把源码已下载误写成已安装。缺少构建文件时会提示先构建。
 - VS Code 扩展：检测 VSIX 包或扩展源码。对经过审查的 VSIX，可由用户在交互提示中选择安装，或显式使用 `--install-vsix`；安装后回查扩展 ID。只有源码、没有 VSIX 时不会擅自运行构建脚本。
+
+使用 RepoWayfinder 制作的 DSH 便携包时，在 **设置 → DSH 便携版位置** 指定解压目录，Skill 会写入该包自己的数据目录。命令行也可加 `--dsh-bundle "D:\你的DSH目录"`。普通安装版从 PATH 或常见安装位置识别。
 
 这些接入结果和普通项目的启动验证分开记录。Skill 写入发现目录后，仍应在目标软件的新会话里确认它可用。
 Skill 若另有 `requirements.txt` 或 `package.json` 声明的运行包，报告会标为“依赖待配置”，不会仅凭目录复制宣称完全可用。

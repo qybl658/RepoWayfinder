@@ -9,9 +9,10 @@ function Read-RepoWayfinderMainMenu {
     Write-Host (Get-RepoWayfinderUiText '[4] 部署历史' '[4] Deployment history')
     Write-Host (Get-RepoWayfinderUiText '[5] 设置' '[5] Settings')
     Write-Host (Get-RepoWayfinderUiText '[6] 打包已验证项目' '[6] Package a verified project')
+    Write-Host (Get-RepoWayfinderUiText '[7] 本周热门 Top 10' '[7] Weekly Trending Top 10')
     Write-Host (Get-RepoWayfinderUiText '[0] 退出' '[0] Exit')
     Write-Host ''
-    do { $choice = (Read-Host (Get-RepoWayfinderUiText '请输入编号' 'Enter a number')).Trim() } until ($choice -in @('0','1','2','3','4','5','6'))
+    do { $choice = (Read-Host (Get-RepoWayfinderUiText '请输入编号' 'Enter a number')).Trim() } until ($choice -in @('0','1','2','3','4','5','6','7'))
     return $choice
 }
 
@@ -23,6 +24,7 @@ function Invoke-RepoWayfinderMenuAction([string]$Choice, [string]$ProjectDir) {
         '4' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'run_reposcout.ps1'),'-ReturnToCaller','--history')) }
         '5' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'settings_menu.ps1'))) }
         '6' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'export_bundle.ps1'))) }
+        '7' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'run_reposcout.ps1'),'-ReturnToCaller','--weekly-trending')) }
         default { throw 'The deploy action belongs to the main launcher.' }
     }
 }
