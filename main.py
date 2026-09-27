@@ -6622,16 +6622,19 @@ def choose_weekly_trending() -> Optional[str]:
     if len(rows) < 10:
         log(ui_text(f"来源本次只提供了 {len(rows)} 个可读取项目。", f"Only {len(rows)} readable entries were available."))
     introductions = weekly_brief_introductions(rows)
+    log(ui_text("提示：按住 Ctrl 点击链接可打开项目页面；终端不支持时可复制链接到浏览器。", "Tip: Ctrl+click a link to open the project page; if unsupported, copy it into your browser."))
     for index, row in enumerate(rows, 1):
+        log("")
         log(f"[{index}] {row['repo']} · {row['language']} · ★ {row['stars'] if row['stars'] is not None else '—'}")
         log(ui_text("    创建日期：", "    Created: ") + row["created_at"][:10])
         log(ui_text("    简介：", "    About: ") + introductions[row["repo"]])
         log("    https://github.com/" + row['repo'])
-    if not reposcout_interactive():
+    log("")
+    if not rows or not reposcout_interactive():
         return None
     while True:
         try:
-            answer = read_visible_input(ui_text("输入编号部署；回车返回：", "Enter a number to deploy; Enter returns: ")).strip()
+            answer = read_visible_input(ui_text(f"有想部署的项目吗？输入编号 1–{len(rows)} 开始部署，直接回车返回：", f"Want to deploy a project? Enter 1–{len(rows)} to start, or press Enter to return: ")).strip()
         except (EOFError, KeyboardInterrupt):
             return None
         if not answer:
