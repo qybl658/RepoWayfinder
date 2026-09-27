@@ -58,13 +58,47 @@ class MultidimensionalSearchTests(unittest.TestCase):
             self.assertEqual(app.search_repos("task", 20), [])
             self.assertEqual(get.call_count, 4)
             self.assertTrue(all("page=2" in call.args[0] for call in get.call_args_list[2:]))
-            self.assertTrue(all(call.kwargs == {"timeout": 25, "retries": 1} for call in get.call_args_list))
+            self.assertTrue(all(call.kwargs == {"timeout": 15, "retries": 1} for call in get.call_args_list))
 
     def test_keyword_candidates_are_public_even_with_existing_token(self):
         with patch.object(app, "github_get_json", return_value={"items": [None, {"full_name": "a/private", "private": True}, {"full_name": "a/public", "private": False}]}) as get:
             pool = app.search_repos("task", 20)
         self.assertEqual([repo.full_name for repo in pool], ["a/public"])
         self.assertTrue(all("is%3Apublic" in call.args[0] for call in get.call_args_list))
+
+    def test_three_queries_share_budget_and_keep_niche_results(self):
+        from urllib.parse import parse_qs, urlparse
+        def rows(prefix, stars=1):
+            return [{"full_name": f"a/{prefix}{i}", "stargazers_count": stars} for i in range(100)]
+        original, translated, alternate, popular = rows("exact"), rows("translate"), rows("alias"), rows("popular", 999999)
+        translated[0] = original[0]
+        with patch.object(app, "github_get_json", side_effect=[{"items": r} for r in (original, translated, alternate, popular)]) as get:
+            pool = app.search_repos("精确需求", 20, queries=["精确需求", "translation", "alias", "ignored"])
+        self.assertEqual(get.call_count, 4)
+        self.assertEqual(len(pool), 20)
+        names = [r.full_name for r in pool]
+        self.assertEqual(len(set(names)), 20)
+        self.assertEqual(names[0], "a/exact0")
+        self.assertIn("a/translate1", names)
+        self.assertIn("a/alias0", names)
+        self.assertTrue(any(name.startswith("a/popular") for name in names))
+        sent = [parse_qs(urlparse(call.args[0]).query)["q"][0] for call in get.call_args_list]
+        self.assertEqual(sent, ["精确需求 is:public", "translation is:public", "alias is:public", "精确需求 is:public"])
+
+    def test_rate_limit_stops_remaining_queries_and_keeps_results(self):
+        with patch.object(app, "github_get_json", side_effect=[{"items": [{"full_name": "a/exact"}]}, app.GitHubRateLimitError("limit")]) as get:
+            pool = app.search_repos("need", 20, queries=["variant", "other"])
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual([r.full_name for r in pool], ["a/exact"])
+
+    def test_fetch_budget_reaches_http_transport_without_hidden_retries(self):
+        from unittest.mock import MagicMock
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"items": []}
+        with patch.object(app.requests, "get", return_value=response) as get:
+            self.assertEqual(app.search_repos("need", 20, queries=["variant", "other"]), [])
+        self.assertEqual(get.call_count, 4)
+
 
 
 if __name__ == "__main__":

@@ -15,35 +15,46 @@ class DiscoveryFeaturesTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(app, "log"))
 
-    def test_rewrite_one_call_and_provider_failures_preserve_input(self):
+    def test_expansion_keeps_original_and_rejects_dropped_names(self):
         with patch.object(app, "AI_API_KEY", "test"), patch.object(app, "OpenAI") as factory:
             create = factory.return_value.chat.completions.create
-            create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"query": "pdf batch rename"})))])
-            self.assertEqual(app.rewrite_search_keyword("按内容批量重命名PDF"), "pdf batch rename")
+            create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"queries": ["pdf batch rename", "file rename"]})))])
+            self.assertEqual(app.prepare_search_queries("按内容批量重命名PDF"), ["按内容批量重命名PDF", "pdf batch rename"])
             self.assertEqual(create.call_count, 1)
             self.assertEqual(factory.call_args.kwargs["max_retries"], 0)
             create.side_effect = TimeoutError("must not be logged")
-            self.assertEqual(app.rewrite_search_keyword("按内容批量重命名PDF"), "按内容批量重命名PDF")
+            self.assertEqual(app.prepare_search_queries("PDF工具"), ["PDF工具"])
             create.side_effect = None
-            create.return_value.choices[0].message.content = '{"query":"pdf stars:>999999"}'
-            self.assertEqual(app.rewrite_search_keyword("PDF工具"), "PDF工具")
+            create.return_value.choices[0].message.content = '{"queries":["pdf stars:>999999"]}'
+            self.assertEqual(app.prepare_search_queries("PDF工具"), ["PDF工具"])
             create.reset_mock()
-            self.assertEqual(app.rewrite_search_keyword("pdf language:Python"), "pdf language:Python")
+            for keyword in ("pdf language:Python", "DeepSeek", "a/repo"):
+                self.assertEqual(app.prepare_search_queries(keyword), [keyword])
             create.assert_not_called()
 
-    def test_empty_rewrite_results_retry_original_and_rank_original_intent(self):
+    def test_expansion_count_dedup_and_empty_plan(self):
+        with patch.object(app, "AI_API_KEY", "test"), patch.object(app, "OpenAI") as factory:
+            create = factory.return_value.chat.completions.create
+            for variants, expected in [([], ["截图翻译"]),
+                                       (["screen translation", "SCREEN translation"], ["截图翻译", "screen translation"]),
+                                       (["a", "b", "c"], ["截图翻译"])]:
+                create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"queries": variants})))])
+                self.assertEqual(app.prepare_search_queries("截图翻译"), expected)
+
+    def test_queries_search_original_and_rank_original_intent(self):
         repo = app.RepoInfo("a", "pdf", "a/pdf", "", "")
-        with patch.object(app, "rewrite_search_keyword", return_value="pdf rename"), \
-             patch.object(app, "search_repos", side_effect=[[], [repo]]) as search, \
+        queries = ["按内容重命名PDF", "pdf rename"]
+        with patch.object(app, "prepare_search_queries", return_value=queries), \
+             patch.object(app, "search_repos", return_value=[repo]) as search, \
              patch.object(app, "rank_repository_candidates", return_value=([repo], False)) as rank, \
              patch.object(app, "reposcout_interactive", return_value=True), \
              patch.object(app, "read_visible_input", return_value=""):
             self.assertIsNone(app.choose_target("按内容重命名PDF", 20))
-            self.assertEqual([call.args[0] for call in search.call_args_list], ["pdf rename", "按内容重命名PDF"])
+            search.assert_called_once_with("按内容重命名PDF", max_candidates=20, queries=queries)
             rank.assert_called_once_with("按内容重命名PDF", [repo])
-        with patch.object(app, "fetch_repo_info", return_value=repo), patch.object(app, "rewrite_search_keyword") as rewrite:
+        with patch.object(app, "fetch_repo_info", return_value=repo), patch.object(app, "prepare_search_queries") as expand:
             self.assertIs(app.choose_target("a/pdf", 20), repo)
-            rewrite.assert_not_called()
+            expand.assert_not_called()
 
     def test_weekly_order_entities_and_missing_metrics(self):
         def article(name, week):
