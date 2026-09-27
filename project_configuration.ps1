@@ -147,6 +147,12 @@ function Initialize-TargetProjectConfigTemplates([string]$ProjectRoot) {
     }
 }
 
+function Read-ProjectConfigTemplateText([string]$Path, [bool]$Toml) {
+    $text = Read-ProjectConfigText $Path $Toml
+    if (-not $Toml) { $text = [regex]::Replace($text, '(?m)^([ \t]*)#[ \t]*([A-Z][A-Z0-9_]*[ \t]*=)', '$1$2') }
+    return $text
+}
+
 function Get-TargetProjectConfigPlan([string]$ProjectRoot) {
     $projectPath = [IO.Path]::GetFullPath($ProjectRoot)
     $fields = [Collections.Generic.List[object]]::new()
@@ -157,7 +163,7 @@ function Get-TargetProjectConfigPlan([string]$ProjectRoot) {
         $target = Join-Path $projectPath $pair[1]
         if (-not (Test-Path -LiteralPath $template -PathType Leaf)) { continue }
         $toml = $pair[1].EndsWith('.toml')
-        $templateFields = @(Get-ProjectConfigAssignments (Read-ProjectConfigText $template $toml) $toml)
+        $templateFields = @(Get-ProjectConfigAssignments (Read-ProjectConfigTemplateText $template $toml) $toml)
         $existingFields = if (Test-Path -LiteralPath $target -PathType Leaf) {
             $existingText = Read-ProjectConfigText $target $toml
             $versions[$pair[1]] = Get-ProjectConfigVersion $existingText
@@ -195,6 +201,11 @@ function Get-TargetProjectConfigPlan([string]$ProjectRoot) {
         $recommended = ($first.Purpose -eq 'text' -and $selected.ContainsKey('llm_provider') -and $selected['llm_provider'] -eq $first.Provider) -or ($first.Purpose -eq 'materials' -and $selected.ContainsKey('video_source') -and $selected['video_source'] -eq $first.Provider)
         $groups.Add([pscustomobject]@{ Id = $group.Name; Provider = $first.Provider; Purpose = $first.Purpose; Recommended = $recommended; Fields = $members })
     }
+    if (@($groups | Where-Object Recommended).Count -eq 0) {
+        $choice = @($groups | Where-Object { $_.Purpose -eq 'text' -and @($_.Fields | Where-Object Configured).Count -gt 0 } | Select-Object -First 1)
+        if ($choice.Count -eq 0) { $choice = @($groups | Where-Object { $_.Purpose -eq 'text' } | Sort-Object @{Expression={ $fields.IndexOf($_.Fields[0]) }} | Select-Object -First 1) }
+        if ($choice.Count) { $choice[0].Recommended = $true }
+    }
     return [pscustomobject]@{ Root = $projectPath; FileVersions = $versions; Fields = @($fields); Groups = @($groups | Sort-Object @{Expression='Recommended';Descending=$true},@{Expression={if ($_.Purpose -eq 'text') {0} elseif ($_.Purpose -eq 'materials') {1} elseif ($_.Purpose -eq 'voice') {2} else {3}}},Provider) }
 }
 
@@ -225,8 +236,15 @@ function Save-TargetProjectConfigEdits($Plan, [hashtable]$Values, [string]$Selec
         if ($toml) { foreach ($line in ($initial -replace '^\uFEFF','' -split "`r?`n")) { $lines.Add($line) } }
         $assignments = @(Get-ProjectConfigAssignments $initial $toml)
         $replacements = [Collections.Generic.List[object]]::new()
+        $appendLines = [Collections.Generic.List[string]]::new()
         foreach ($field in $targetGroup.Group) {
             $match = @($assignments | Where-Object { $_.Section -eq $field.Section -and $_.Key -eq $field.Key })
+            if (-not $toml -and $match.Count -eq 0) {
+                # A template may document optional keys only as comments. Append
+                # only the selected field; leave all other examples inactive.
+                $appendLines.Add($field.Key + '=' + (ConvertTo-DotenvQuotedValue $updates[$field.Id]))
+                continue
+            }
             if ($match.Count -ne 1) { throw 'Configuration changed or has an ambiguous field; nothing was saved.' }
             if ($toml) {
                 $encoded = ConvertTo-Json -InputObject $updates[$field.Id] -Compress
@@ -243,6 +261,7 @@ function Save-TargetProjectConfigEdits($Plan, [hashtable]$Values, [string]$Selec
             foreach ($replacement in @($replacements | Sort-Object Start -Descending)) {
                 $changed = $changed.Substring(0, $replacement.Start) + $replacement.Text + $changed.Substring($replacement.End)
             }
+            if ($appendLines.Count) { $changed += [Environment]::NewLine + ($appendLines -join [Environment]::NewLine) + [Environment]::NewLine }
             $changed
         }
         if ((Read-ProjectConfigText $path $toml) -cne $initial) { throw 'Concurrent project configuration edit; nothing was saved.' }
@@ -263,7 +282,7 @@ function Get-ProjectConfigDisplayValue($Plan, $Field) {
     foreach ($candidate in @(@($Field.Target,'current'),@($(if ($Field.Target -eq '.env') {'.env.example'} else {'config.example.toml'}),'project_default'))) {
         $path = Join-Path $Plan.Root $candidate[0]
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-        $assignment = @(Get-ProjectConfigAssignments (Read-ProjectConfigText $path $toml) $toml | Where-Object { $_.Section -eq $Field.Section -and $_.Key -eq $Field.Key })
+        $assignment = @(Get-ProjectConfigAssignments $(if ($candidate[1] -eq 'project_default') { Read-ProjectConfigTemplateText $path $toml } else { Read-ProjectConfigText $path $toml }) $toml | Where-Object { $_.Section -eq $Field.Section -and $_.Key -eq $Field.Key })
         if ($assignment.Count -ne 1) { continue }
         if (-not $toml) {
             if (-not $assignment[0].HasValue) { continue }
@@ -299,12 +318,12 @@ function Show-TargetProjectConfiguration([string]$ProjectRoot, [string]$UiLangua
     $form.MinimizeBox = $false
     $intro = New-Object Windows.Forms.Label
     $intro.SetBounds(20,14,700,44)
-    $intro.Text = & $text '选择要配置的功能。只填需要更换的值，留空保留原值。' 'Choose a feature. Enter only values you want to change; blank keeps the current value.'
+    $intro.Text = & $text '先选一家 AI 服务即可，其他 Key 按需填写。推荐项优先使用项目已选或已配置的服务，否则取模板中首个已识别的 AI 服务。留空保留原值。' 'Start with one AI provider. Prefer the selected/configured provider, otherwise the first recognized AI provider in the template. Other keys are optional; blank keeps existing values.'
     $form.Controls.Add($intro)
     $combo = New-Object Windows.Forms.ComboBox
     $combo.DropDownStyle = 'DropDownList'
     $combo.SetBounds(20,70,700,30)
-    $purposeNames = @{text=@('AI 文案生成','AI text generation');materials=@('视频素材搜索','Video material search');voice=@('语音合成','Speech synthesis');video=@('图像或视频生成','Image or video generation');access=@('项目访问保护','Project access protection');other=@('其他可选配置','Other optional configuration')}
+    $purposeNames = @{text=@('AI 模型服务','AI model service');materials=@('视频素材搜索','Video material search');voice=@('语音合成','Speech synthesis');video=@('图像或视频生成','Image or video generation');access=@('项目访问保护','Project access protection');other=@('其他可选配置','Other optional configuration')}
     foreach ($group in $plan.Groups) {
         $purpose = $purposeNames[$group.Purpose]
         $name = (& $text $purpose[0] $purpose[1]) + ' · ' + $group.Provider

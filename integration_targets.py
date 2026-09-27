@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,33 @@ def _runtime_requirements(folder: Path) -> str:
     if package.get("dependencies") or package.get("optionalDependencies"):
         notes.append("Node packages in package.json")
     return "; ".join(notes)
+
+
+def is_standalone_app_with_bundled_skills(root: Path, candidates: list[dict[str, str]]) -> bool:
+    """Do not turn an application's bundled Skills into its deployment route.
+
+    A CLI entry point is stronger evidence of an app than the mere presence of
+    nested SKILL.md files. An explicit Skill selection can still use the normal
+    artifact discovery and installation path.
+    """
+    if (not candidates or (root / "SKILL.md").is_file()
+            or any(item["relative"] == "." and item["kind"] == "agent_skill" for item in candidates)
+            or any(item["kind"] not in {"agent_skill", "selection_required"} for item in candidates)):
+        return False
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file() and not pyproject.is_symlink():
+        try:
+            if pyproject.stat().st_size <= 1048576:
+                data = tomllib.loads(pyproject.read_text(encoding="utf-8-sig"))
+                project = data.get("project", {})
+                poetry = data.get("tool", {}).get("poetry", {})
+                if (isinstance(project, dict) and (project.get("scripts") or project.get("gui-scripts"))
+                        or isinstance(poetry, dict) and poetry.get("scripts")):
+                    return True
+        except (OSError, ValueError, TypeError):
+            pass
+    package = _read_json(root / "package.json")
+    return bool(package.get("bin"))
 
 
 def discover_integrations(root: Path, selected_skill: str = "") -> list[dict[str, str]]:

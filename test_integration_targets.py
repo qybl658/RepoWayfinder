@@ -87,6 +87,32 @@ class HostIntegrationTests(unittest.TestCase):
             chosen = integration.discover_integrations(root, "examples/skills/item-3")
             self.assertEqual([(item["kind"], item["name"]) for item in chosen], [("agent_skill", "item-3")])
 
+    def test_cli_app_with_bundled_skills_uses_project_route_by_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "sample-app"\n[project.scripts]\nsample = "sample:main"\n', encoding="utf-8")
+            for index in range(9):
+                skill = root / "optional-skills" / f"item-{index}"
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text(f"---\nname: item-{index}\n---\n", encoding="utf-8")
+            candidates = integration.discover_integrations(root)
+            self.assertEqual(candidates[0]["kind"], "selection_required")
+            self.assertTrue(integration.is_standalone_app_with_bundled_skills(root, candidates))
+            chosen = integration.discover_integrations(root, "optional-skills/item-3")
+            self.assertEqual([(item["kind"], item["name"]) for item in chosen], [("agent_skill", "item-3")])
+
+    def test_skill_collection_with_project_dependencies_stays_skill_route(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "skill-collection"\ndependencies = ["sample"]\n', encoding="utf-8")
+            for index in range(9):
+                skill = root / "skills" / f"item-{index}"
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text(f"---\nname: item-{index}\n---\n", encoding="utf-8")
+            self.assertFalse(integration.is_standalone_app_with_bundled_skills(root, integration.discover_integrations(root)))
+
     def test_explicit_claude_skill_does_not_install_to_codex(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -998,10 +999,23 @@ def finalize_refreshed_checkout(checkout: Path, archived: Optional[Path], keep_b
         return checkout
     root = BASE_DIR.resolve()
     resolved = archived.resolve()
-    if resolved.parent != root or resolved == checkout.resolve():
+    if (resolved.parent != root or resolved == checkout.resolve() or archived.is_symlink()
+            or not checkout.is_dir() or not resolved.name.startswith(checkout.name + ".old-")):
         raise RepoWayfinderError(f"Refusing to delete an unexpected checkout backup path: {resolved}")
+    def retry_readonly(function, path, exc_info):
+        failed = Path(path)
+        error = exc_info[1]
+        # Git pack files on Windows are read-only. Only remove that attribute
+        # on an owned file inside this exact archive; do not relax ACLs or follow links.
+        if (not isinstance(error, PermissionError) or function not in (os.unlink, os.remove)
+                or failed.is_symlink() or not failed.is_file()
+                or resolved not in failed.resolve().parents
+                or failed.stat().st_mode & stat.S_IWRITE):
+            raise error
+        failed.chmod(failed.stat().st_mode | stat.S_IWRITE)
+        function(path)
     try:
-        shutil.rmtree(resolved)
+        shutil.rmtree(resolved, onerror=retry_readonly)
         log(ui_text(f"新版已准备完成；已删除旧版以节省空间：{resolved}", f"The new version is ready; deleted the old version to save space: {resolved}"))
     except OSError as exc:
         log(ui_text(f"新版已准备完成，但旧版暂时无法删除，仍保留在：{resolved}（{exc}）", f"The new version is ready, but the old version could not be deleted and remains at: {resolved} ({exc})"))
@@ -4294,7 +4308,8 @@ def detect_required_config(repo_path: Path) -> list[str]:
             continue
         text = read_text_limited(config_file, 60000)
         if filename == ".env.example":
-            keys.update(binding.key for binding in project_config.dotenv_bindings(text)
+            template_text = re.sub(r"(?m)^([ \t]*)#[ \t]*([A-Z][A-Z0-9_]*[ \t]*=)", r"\1\2", text)
+            keys.update(binding.key for binding in project_config.dotenv_bindings(template_text)
                         if not binding.error and binding.key and project_config.sensitive_key(binding.key))
             continue
         for line in text.splitlines():
@@ -4930,6 +4945,8 @@ def deploy_repo(repo: RepoInfo, force_refresh: bool = False, update_existing: bo
         summary = scan_repo(checkout)
         required_config = detect_required_config(checkout)
         integration_candidates = integration_targets.discover_integrations(checkout, integration_skill)
+        if not integration_skill and integration_targets.is_standalone_app_with_bundled_skills(checkout, integration_candidates):
+            integration_candidates = []
         selection = next((item for item in integration_candidates if item["kind"] == "selection_required"), None)
         if not integration_skill and selection and reposcout_interactive():
             options = [name.strip() for name in selection.get("available", "").split(",") if name.strip()]
