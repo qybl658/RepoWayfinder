@@ -13,7 +13,7 @@ Write-Host ('DEPLOY_ARGS:' + ($TargetArgs -join '|'))
 $global:LASTEXITCODE = 0
 '@ | Set-Content -LiteralPath (Join-Path $work 'run_reposcout.ps1') -Encoding UTF8
 @'
-param([switch]$OpenOnly)
+param([switch]$OpenOnly, [switch]$NoPause)
 Write-Output ('MENU_ACTION:' + $OpenOnly)
 exit 7
 '@ | Set-Content -LiteralPath (Join-Path $work 'continue_last_deployment.ps1') -Encoding UTF8
@@ -23,7 +23,7 @@ $previousLanguage = $env:REPOSCOUT_UI_LANGUAGE
 try {
     $env:REPOSCOUT_LAUNCHER_CAPTURE_TEST = '1'
     $env:REPOSCOUT_UI_LANGUAGE = 'en'
-    foreach ($choice in @('0','2','3')) {
+    foreach ($choice in @('0','2')) {
         $output = $choice | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
         $expected = if ($choice -eq '0') { 0 } else { 7 }
         Assert-Menu ($LASTEXITCODE -eq $expected) "Menu $choice lost exit code: $output"
@@ -32,10 +32,11 @@ try {
     }
     $output = @('1','local/demo') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
     Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains('DEPLOY_ARGS:local/demo')) "Deploy choice lost target: $output"
-    foreach ($choice in @('4','5','7')) {
+    foreach ($choice in @('3','4','5','7')) {
         $output = @($choice,'0') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
-        $marker = if ($choice -eq '4') { 'DEPLOY_ARGS:--history' } elseif ($choice -eq '7') { 'DEPLOY_ARGS:--weekly-trending' } else { 'SETTINGS_OPENED' }
-        Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains($marker)) "History/settings route failed: $output"
+        $marker = if ($choice -eq '3') { 'MENU_ACTION:True' } elseif ($choice -eq '4') { 'DEPLOY_ARGS:--history' } elseif ($choice -eq '7') { 'DEPLOY_ARGS:--weekly-trending' } else { 'SETTINGS_OPENED' }
+        Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains($marker)) "Navigation failed to return to menu: $output"
+        Assert-Menu (([regex]::Matches($output, [regex]::Escape('[1] Deploy a project'))).Count -ge 2) "Menu was not displayed again: $output"
     }
     $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') -Target 'local/direct' -NoPause 2>&1 | Out-String
     Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains('DEPLOY_ARGS:local/direct') -and -not $output.Contains('[1] Deploy')) "Explicit target unexpectedly enters menu: $output"

@@ -20,7 +20,7 @@ function Invoke-RepoWayfinderMenuAction([string]$Choice, [string]$ProjectDir) {
     switch ($Choice) {
         '0' { return 0 }
         '2' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'continue_last_deployment.ps1'))) }
-        '3' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'continue_last_deployment.ps1'),'-OpenOnly')) }
+        '3' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'continue_last_deployment.ps1'),'-OpenOnly','-NoPause')) }
         '4' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'run_reposcout.ps1'),'-ReturnToCaller','--history')) }
         '5' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'settings_menu.ps1'))) }
         '6' { return (Invoke-RepoWayfinderPowerShellWithProgress @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $ProjectDir 'export_bundle.ps1'))) }

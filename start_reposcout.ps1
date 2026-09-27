@@ -220,7 +220,7 @@ try {
             $menuChoice = Read-RepoWayfinderMainMenu
             if ($menuChoice -eq '1') { break }
             $menuResult = Invoke-RepoWayfinderMenuAction -Choice $menuChoice -ProjectDir $projectDir
-            if ($menuChoice -in @('0','2','3')) { exit $menuResult }
+            if ($menuChoice -in @('0','2')) { exit $menuResult }
         }
     }
     Write-Host ''
