@@ -32,6 +32,8 @@ try {
     }
     $output = @('1','local/demo') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
     Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains('DEPLOY_ARGS:local/demo')) "Deploy choice lost target: $output"
+    $output = @('1','') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
+    Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains('DEPLOY_ARGS:gabrielecirulli/2048')) "Default demo route failed: $output"
     foreach ($choice in @('3','4','5','7')) {
         $output = @($choice,'0') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
         $marker = if ($choice -eq '3') { 'MENU_ACTION:True' } elseif ($choice -eq '4') { 'DEPLOY_ARGS:--history' } elseif ($choice -eq '7') { 'DEPLOY_ARGS:--weekly-trending' } else { 'SETTINGS_OPENED' }

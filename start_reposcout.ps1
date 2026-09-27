@@ -238,13 +238,13 @@ try {
 
     if ([string]::IsNullOrWhiteSpace($Target)) {
         Write-Host (Get-RepoWayfinderUiText '输入 GitHub 地址、owner/repo、本地目录或搜索关键词。' 'Enter a GitHub URL, owner/repo, local folder, or keywords.')
-        Write-Host (Get-RepoWayfinderUiText '如果你只是想试运行，直接按 Enter 会使用演示仓库: harry0703/MoneyPrinterTurbo' 'Press Enter to use the demo repository: harry0703/MoneyPrinterTurbo')
+        Write-Host (Get-RepoWayfinderUiText '直接按 Enter 试玩 2048：无需 Key，部署后在浏览器中用方向键玩。' 'Press Enter to try 2048: no API key; play with arrow keys in your browser.')
         Write-Host ''
         $Target = Read-Host (Get-RepoWayfinderUiText '目标仓库' 'Target repository')
     }
 
     if ([string]::IsNullOrWhiteSpace($Target)) {
-        $Target = 'harry0703/MoneyPrinterTurbo'
+        $Target = 'gabrielecirulli/2048'
         Write-Host (Get-RepoWayfinderUiText "使用演示仓库: $Target" "Using demo repository: $Target")
     } else {
         Write-Host (Get-RepoWayfinderUiText "使用你输入的目标: $Target" "Using target: $Target")

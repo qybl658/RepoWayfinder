@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from html.parser import HTMLParser
 import ctypes
 import getpass
 import hashlib
@@ -25,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, unquote
 from urllib.request import getproxies
 
 import mainline_recovery
@@ -1334,12 +1335,84 @@ def documented_node_execution_plan(repo_path: Path) -> Optional[ExecutionPlan]:
     return ExecutionPlan("DEPLOY", steps, f"Node project with documented {manager} start web route", "readme")
 
 
+class StaticPageReferences(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.references: list[str] = []
+        self.unsupported = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        values = dict(attrs)
+        if tag == "script":
+            if values.get("type", "").lower() == "module":
+                self.unsupported = True
+            if values.get("src"):
+                self.references.append(values["src"] or "")
+        elif tag == "link" and "stylesheet" in (values.get("rel") or "").lower().split():
+            if values.get("href"):
+                self.references.append(values["href"] or "")
+
+
+def static_html_execution_plan(repo_path: Path) -> Optional[ExecutionPlan]:
+    """Serve only a self-contained root HTML page with no build or server route."""
+    index = repo_path / "index.html"
+    if not index.is_file() or index.is_symlink():
+        return None
+    runtime_files = {
+        "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock",
+        "bun.lock", "bun.lockb", "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg",
+        "pipfile", "gemfile", "gemfile.lock", "cargo.toml", "go.mod", "procfile",
+        "dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+        "manage.py", "app.py", "server.py", "server.js", "server.mjs", "vite.config.js",
+        "vite.config.ts", "webpack.config.js", "webpack.config.ts", "rollup.config.js",
+        "rollup.config.ts", "next.config.js", "next.config.mjs", "astro.config.mjs",
+    }
+    if any(path.name.lower() in runtime_files for path in repo_path.iterdir()):
+        return None
+    try:
+        if index.stat().st_size > 1024 * 1024:
+            return None
+        html = index.read_text(encoding="utf-8-sig")
+        page = StaticPageReferences()
+        page.feed(html)
+        if page.unsupported:
+            return None
+        if re.search(r"\b(?:fetch\s*\(|XMLHttpRequest\b|WebSocket\s*\(|EventSource\s*\(|axios\s*\.)", html):
+            return None
+        for reference in page.references:
+            parsed = urlsplit(reference)
+            if parsed.scheme or parsed.netloc or reference.startswith(("//", "/")):
+                return None
+            relative = unquote(parsed.path)
+            path = (repo_path / relative).resolve()
+            if not relative or repo_path.resolve() not in path.parents or not path.is_file() or path.is_symlink():
+                return None
+            if path.suffix.lower() in {".js", ".mjs"}:
+                if path.stat().st_size > 1024 * 1024:
+                    return None
+                script = path.read_text(encoding="utf-8-sig")
+                if re.search(r"\b(?:fetch\s*\(|XMLHttpRequest\b|WebSocket\s*\(|EventSource\s*\(|axios\s*\.)", script):
+                    return None
+    except (OSError, UnicodeError, ValueError):
+        return None
+    # A fixed free port is part of the saved plan and the report-local launcher.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    step = CommandStep("exec", f"python -I -m http.server {port} --bind 127.0.0.1", "start static HTML server", 20)
+    return ExecutionPlan("DEPLOY", [step], "Root index.html and local script/style assets are present; no build or server manifest found", "static_html")
+
+
 def local_heuristic_plan(repo: RepoInfo, repo_path: Path, include_docker: bool = True) -> ExecutionPlan:
     steps: list[CommandStep] = []
     requirements = repo_path / "requirements.txt"
     pyproject = repo_path / "pyproject.toml"
     setup_py = repo_path / "setup.py"
     package_json = repo_path / "package.json"
+
+    static_plan = static_html_execution_plan(repo_path)
+    if static_plan is not None:
+        return static_plan
 
     docker_plan = dockerfile_execution_plan(repo, repo_path) if include_docker else None
     if docker_plan is not None:
@@ -1435,6 +1508,9 @@ def planner_client_config() -> tuple[str, str, str]:
 
 def ai_execution_plan(repo: RepoInfo, repo_path: Path, summary: str) -> ExecutionPlan:
     heuristic = local_heuristic_plan(repo, repo_path)
+    if heuristic.source == "static_html":
+        log("Deterministic static HTML route selected; no AI planning request is needed.")
+        return heuristic
     if heuristic.source in {"readme", "dockerfile"} and "docker" in required_plan_prerequisites(heuristic):
         log("Deterministic Docker route selected from repository Dockerfile/README; AI will not replace it with host runtime commands.")
         return heuristic
@@ -2231,7 +2307,11 @@ def required_plan_prerequisites(plan: ExecutionPlan) -> list[str]:
 def execution_route_summary(plan: ExecutionPlan) -> dict[str, Any]:
     prerequisites = required_plan_prerequisites(plan)
     heads = [command_head(step.cmd) for step in plan.steps]
-    if "docker" in prerequisites:
+    if plan.source == "static_html":
+        route = "static_html"
+        stages = ["确认本地静态文件", "临时启动本地 HTTP 服务", "验证 index.html 页面"]
+        not_required = ["host_node"]
+    elif "docker" in prerequisites:
         route = "docker"
         stages = ["准备或确认 Docker 环境", "构建镜像", "启动容器并验证运行结果"]
         not_required = ["host_node", "host_python"]
@@ -3481,7 +3561,8 @@ def execute_plan(repo_path: Path, plan: ExecutionPlan) -> tuple[bool, list[Comma
     if not ok:
         log(f"Execution plan rejected: {reason}")
         return False, [], [{"reason": reason}], RuntimeCheck("validate", False, reason=reason)
-    python: Optional[Path] = prepare_python_env(repo_path) if plan_needs_python(plan) else None
+    python: Optional[Path] = (choose_python_executable(repo_path, trusted_only=True) if plan.source == "static_html"
+                              else prepare_python_env(repo_path) if plan_needs_python(plan) else None)
     attempts: list[CommandResult] = []
     repairs: list[dict[str, Any]] = []
     runtime_check = RuntimeCheck("not_applicable", None, reason="no runtime step executed")
@@ -3507,7 +3588,8 @@ def run_step_with_repairs(
     while True:
         command = adapt_command(step.cmd, python)
         if is_runtime_step(step):
-            result, runtime_check = run_runtime_step(command, repo_path, step.timeout, shell=(step.type == "shell" and isinstance(command, str)), target_process=True)
+            static_url = static_html_url(step.cmd) if step.purpose == "start static HTML server" else ""
+            result, runtime_check = run_runtime_step(command, repo_path, step.timeout, shell=(step.type == "shell" and isinstance(command, str)), target_process=True, expected_url=static_url)
             last_check = runtime_check
             success = runtime_check.success
         else:
@@ -3598,6 +3680,13 @@ def is_runtime_step(step: CommandStep) -> bool:
     return any(token in marker for token in ["demo", "server", "start", "smoke", "docker run", "app.py", "main.py", "hello.py", "run.py", "run the main", "run the application", "npm run start"])
 
 
+def static_html_url(command: str) -> str:
+    match = re.fullmatch(r"python -I -m http\.server (\d{1,5}) --bind 127\.0\.0\.1", command)
+    if not match or not 1 <= int(match.group(1)) <= 65535:
+        return ""
+    return f"http://127.0.0.1:{match.group(1)}/index.html"
+
+
 def task_owned_docker_container_name(command: list[str] | str) -> str:
     try:
         parts = command if isinstance(command, list) else split_command(command)
@@ -3624,7 +3713,7 @@ def stop_task_owned_runtime(command: list[str] | str) -> None:
         log(f"RepoWayfinder-owned validation container cleanup returned {code}: {detail[-500:]}")
 
 
-def run_runtime_step(command: list[str] | str, cwd: Path, timeout: int, shell: bool = False, target_process: bool = False) -> tuple[CommandResult, RuntimeCheck]:
+def run_runtime_step(command: list[str] | str, cwd: Path, timeout: int, shell: bool = False, target_process: bool = False, expected_url: str = "") -> tuple[CommandResult, RuntimeCheck]:
     started = time.time()
     printable = render_command_for_replay(command)
     argv = [] if isinstance(command, str) else [str(part) for part in command]
@@ -3675,8 +3764,9 @@ def run_runtime_step(command: list[str] | str, cwd: Path, timeout: int, shell: b
             if pulse_emitted:
                 finish_wait_pulse()
             return result, check
-        urls = extract_local_urls("".join(output))
-        urls.extend(url for url in probe_common_local_urls(quick=True) if url not in before_urls)
+        urls = [expected_url] if expected_url else extract_local_urls("".join(output))
+        if not expected_url:
+            urls.extend(url for url in probe_common_local_urls(quick=True) if url not in before_urls)
         check = check_runtime_urls(urls, started)
         if check.success:
             terminate_process(process)
@@ -3688,8 +3778,9 @@ def run_runtime_step(command: list[str] | str, cwd: Path, timeout: int, shell: b
             return CommandResult(printable, process.returncode, redact_known_proxy_credentials("".join(output)), "", True, duration, argv=argv), check
         time.sleep(0.5)
 
-    urls = extract_local_urls("".join(output))
-    urls.extend(url for url in probe_common_local_urls(quick=False) if url not in before_urls)
+    urls = [expected_url] if expected_url else extract_local_urls("".join(output))
+    if not expected_url:
+        urls.extend(url for url in probe_common_local_urls(quick=False) if url not in before_urls)
     check = check_runtime_urls(urls, started)
     terminate_process(process)
     stop_task_owned_runtime(command)
@@ -5111,6 +5202,12 @@ def capture_plan_evidence(root: Path, plan: ExecutionPlan) -> dict[str, str]:
              "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg",
              ".python-version", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
              "compose.yml", "compose.yaml", "Procfile", ".env.example", "config.example.toml"}
+    if plan.source == "static_html":
+        names.add("index.html")
+        page = StaticPageReferences()
+        page.feed((root / "index.html").read_text(encoding="utf-8-sig"))
+        for reference in page.references:
+            names.add(unquote(urlsplit(reference).path))
     for step in plan.steps:
         try:
             output_value = False
@@ -5844,7 +5941,42 @@ def docker_build_image_name(cmd: str) -> str:
     return ""
 
 
+def write_static_html_start_script(report: DeploymentReport) -> None:
+    if not report.repo_path or not report.plan.get("steps"):
+        return
+    command = str(report.plan["steps"][-1].get("cmd", ""))
+    url = static_html_url(command)
+    if not url or report.runtime_url != url:
+        return
+    python = next((str(attempt.get("argv", [""])[0]) for attempt in report.attempts
+                   if attempt.get("planned_cmd") == command and attempt.get("argv")), "")
+    if not python or not Path(python).is_file():
+        return
+    path = ARTIFACT_DIR / "start_demo.ps1"
+    path.write_text("\n".join([
+        "# Generated by RepoWayfinder for a static HTML page.",
+        "$ErrorActionPreference = 'Stop'",
+        f"Set-Location -LiteralPath {ps_single_quoted(str(Path(report.repo_path).resolve()))}",
+        f"Write-Host {ps_single_quoted('Keep this window open, then visit ' + url)}",
+        f"& {ps_single_quoted(python)} -I -m http.server {urlsplit(url).port} --bind 127.0.0.1",
+        "if ($LASTEXITCODE -ne 0) { throw 'Static HTML server failed to start.' }",
+    ]) + "\n", encoding="utf-8-sig")
+    report.start_script_path = str(path)
+    bat_path = ARTIFACT_DIR / "start_demo.bat"
+    bat_path.write_text("\r\n".join([
+        "@echo off", "chcp 65001 >nul", "title RepoWayfinder Static Demo",
+        f"echo Local URL: {batch_echo_text(url)}",
+        "echo Keep this window open while using the page.",
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_demo.ps1"',
+        "set \"CODE=%ERRORLEVEL%\"", "if not \"%CODE%\"==\"0\" pause", "exit /b %CODE%",
+    ]) + "\r\n", encoding="utf-8")
+    report.start_bat_path = str(bat_path)
+
+
 def write_start_script(report: DeploymentReport) -> None:
+    if report.plan.get("source") == "static_html":
+        write_static_html_start_script(report)
+        return
     guide = report.beginner_guide or {}
     commands = [str(cmd).strip() for cmd in (guide.get("how_to_run_again") or []) if str(cmd).strip()]
     if not report.repo_path or len(commands) < 2:
