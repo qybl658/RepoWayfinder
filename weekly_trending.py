@@ -94,3 +94,42 @@ def fetch_weekly_trending() -> list[dict]:
                 raise ValueError("Trending response exceeds size limit")
             chunks.append(chunk)
     return parse_weekly_trending(b"".join(chunks).decode("utf-8", errors="replace"))
+
+
+def recent_projects_source(now=None):
+    from datetime import datetime, timedelta, timezone
+    from urllib.parse import quote
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=30)).date().isoformat()
+    query = f"created:>={cutoff} stars:>0 fork:false archived:false is:public"
+    return query, "https://github.com/search?q=" + quote(query) + "&type=repositories&s=stars&o=desc"
+
+
+def fetch_recent_projects(get_json, now=None) -> list[dict]:
+    from datetime import datetime, timedelta, timezone
+    from urllib.parse import quote
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=30)).date()
+    query, _ = recent_projects_source(now)
+    data = get_json("https://api.github.com/search/repositories?q=" + quote(query)
+                    + "&sort=stars&order=desc&per_page=30", timeout=20, retries=1)
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list) or data.get("incomplete_results"):
+        raise ValueError("New-project search did not return a complete result")
+    rows, seen = [], set()
+    for item in data["items"]:
+        if not isinstance(item, dict) or item.get("fork") or item.get("archived") or item.get("private"):
+            continue
+        try:
+            name = item["full_name"]
+            created = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name) or not cutoff <= created.date() <= now.date():
+                continue
+            stars = int(item["stargazers_count"])
+            if stars <= 0 or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            rows.append({"repo": name, "description": str(item.get("description") or "")[:600],
+                         "language": item.get("language") or "—", "stars": stars, "created_at": item["created_at"]})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(rows, key=lambda row: (-row["stars"], row["repo"].casefold()))[:10]

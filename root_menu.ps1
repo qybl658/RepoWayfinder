@@ -9,7 +9,7 @@ function Read-RepoWayfinderMainMenu {
     Write-Host (Get-RepoWayfinderUiText '[4] 部署历史' '[4] Deployment history')
     Write-Host (Get-RepoWayfinderUiText '[5] 设置' '[5] Settings')
     Write-Host (Get-RepoWayfinderUiText '[6] 打包已验证项目' '[6] Package a verified project')
-    Write-Host (Get-RepoWayfinderUiText '[7] 本周热门 Top 10' '[7] Weekly Trending Top 10')
+    Write-Host (Get-RepoWayfinderUiText '[7] 新项目 Top 10（近30天）' '[7] New projects Top 10 (last 30 days)')
     Write-Host (Get-RepoWayfinderUiText '[0] 退出' '[0] Exit')
     Write-Host ''
     do { $choice = (Read-Host (Get-RepoWayfinderUiText '请输入编号' 'Enter a number')).Trim() } until ($choice -in @('0','1','2','3','4','5','6','7'))

@@ -66,6 +66,8 @@ class DiscoveryFeaturesTests(unittest.TestCase):
             create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"a/one": "翻译截图中的文字。", "a/empty": "invented", "unknown/repo": "invented", "a/long": "x" * 121})))])
             descriptions = app.weekly_brief_introductions(rows)
             self.assertEqual(create.call_count, 1)
+            self.assertEqual(factory.call_args.kwargs["timeout"], 20)
+            self.assertEqual(create.call_args.kwargs["extra_body"], {"thinking": {"type": "disabled"}})
             self.assertEqual(descriptions["a/one"], "翻译截图中的文字。")
             self.assertNotEqual(descriptions["a/empty"], "invented")
             self.assertNotIn("unknown/repo", descriptions)
@@ -75,6 +77,19 @@ class DiscoveryFeaturesTests(unittest.TestCase):
         with patch.object(app, "OpenAI") as factory:
             self.assertEqual(app.weekly_brief_introductions(rows)["a/one"], rows[0]["description"])
             factory.assert_not_called()
+
+    def test_recent_projects_exclude_old_and_forks(self):
+        from datetime import datetime, timezone
+        from weekly_trending import fetch_recent_projects
+        now = datetime(2026, 9, 27, tzinfo=timezone.utc)
+        items = [{"full_name": "a/old", "created_at": "2020-01-01T00:00:00Z", "stargazers_count": 99999},
+                 {"full_name": "a/new", "created_at": "2026-09-20T00:00:00Z", "stargazers_count": 99},
+                 {"full_name": "a/fork", "created_at": "2026-09-20T00:00:00Z", "stargazers_count": 1000, "fork": True}]
+        get = MagicMock(return_value={"items": items})
+        self.assertEqual([r["repo"] for r in fetch_recent_projects(get, now)], ["a/new"])
+        self.assertIn("created%3A%3E%3D2026-08-28", get.call_args.args[0])
+        self.assertEqual(app.short_ai_request_options("https://api.deepseek.com")["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertEqual(app.short_ai_request_options("https://example.com/v1"), {})
 
     def test_weekly_order_entities_and_missing_metrics(self):
         def article(name, week):
@@ -134,13 +149,13 @@ class DiscoveryFeaturesTests(unittest.TestCase):
             self.assertTrue(bundle.exists())
 
     def test_weekly_selection_uses_displayed_repo_and_noninteractive_only_lists(self):
-        rows = [{"repo": "a/first", "description": "Example", "language": "Python", "stars": 10, "weekly_stars": 3},
-                {"repo": "b/second", "description": "Example", "language": "Go", "stars": 20, "weekly_stars": 5}]
-        with patch("weekly_trending.fetch_weekly_trending", return_value=rows), \
+        rows = [{"repo": "a/first", "description": "Example", "language": "Python", "stars": 10, "created_at": "2026-09-20T00:00:00Z"},
+                {"repo": "b/second", "description": "Example", "language": "Go", "stars": 20, "created_at": "2026-09-21T00:00:00Z"}]
+        with patch("weekly_trending.fetch_recent_projects", return_value=rows), \
              patch.object(app, "reposcout_interactive", return_value=True), \
              patch.object(app, "read_visible_input", return_value="2"):
             self.assertEqual(app.choose_weekly_trending(), "b/second")
-        with patch("weekly_trending.fetch_weekly_trending", return_value=rows), \
+        with patch("weekly_trending.fetch_recent_projects", return_value=rows), \
              patch.object(app, "reposcout_interactive", return_value=False), \
              patch.object(app, "read_visible_input") as prompt:
             self.assertIsNone(app.choose_weekly_trending())
