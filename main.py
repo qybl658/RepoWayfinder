@@ -6776,7 +6776,7 @@ def main() -> int:
         os.environ["REPOWAYFINDER_DSH_BUNDLE"] = str(Path(args.dsh_bundle).resolve())
     if args.weekly_trending:
         if any((args.target, args.history, args.export_report, args.bundle_profile, args.bundle_output,
-                args.resume_report, args.guide_report, args.plan_file, args.configure_search, args.configure_hosts, args.configure_deployment_mode)):
+                args.resume_report, args.guide_report, args.plan_file, args.configure_search, args.configure_deployment_mode)):
             parser.error("--weekly-trending cannot be combined with another task")
         try:
             args.target = choose_weekly_trending()
