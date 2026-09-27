@@ -26,12 +26,7 @@ if (Test-Path -LiteralPath $reportsRoot -PathType Container) {
         $reportPath = $reportFile.FullName
         try { $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
         if ($OpenOnly) {
-            if ($report.repo_path -isnot [string] -or [string]::IsNullOrWhiteSpace($report.repo_path)) { continue }
-            try {
-                if (-not [IO.Path]::IsPathRooted($report.repo_path) -or -not (Test-Path -LiteralPath $report.repo_path -PathType Container)) { continue }
-                $targetDirectory = [IO.Path]::GetFullPath($report.repo_path)
-            } catch { continue }
-            $selected = [pscustomobject]@{ Report=$reportPath; ResumeBat=''; Directory=$targetDirectory }
+            $selected = [pscustomobject]@{ Report=$reportPath; ResumeBat=''; Directory=$directory.FullName }
             break
         }
         if ([string]$report.action -ne 'WAITING_ENVIRONMENT' -or [bool]$report.project_execution_started) { continue }
@@ -53,7 +48,7 @@ if ($null -eq $selected) {
 }
 
 if ($OpenOnly) {
-    Write-Host "上次部署目录: $($selected.Directory)"
+    Write-Host "上次运行结果目录: $($selected.Directory)"
     Write-Host "报告: $($selected.Report)"
     if (-not $NoOpen) { Start-Process -FilePath 'explorer.exe' -ArgumentList @($selected.Directory) }
     exit 0

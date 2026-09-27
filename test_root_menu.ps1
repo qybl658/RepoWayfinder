@@ -27,7 +27,7 @@ try {
         $output = $choice | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
         $expected = if ($choice -eq '0') { 0 } else { 7 }
         Assert-Menu ($LASTEXITCODE -eq $expected) "Menu $choice lost exit code: $output"
-        Assert-Menu ($output.Contains('[3] Open last project folder') -and $output.Contains('[4] Deployment history') -and $output.Contains('[5] Settings')) 'Main menu is missing an action.'
+        Assert-Menu ($output.Contains('[3] Open last run results (guides/logs)') -and $output.Contains('[4] Deployment history') -and $output.Contains('[5] Settings')) 'Main menu is missing an action.'
         if ($choice -ne '0') { Assert-Menu ($output.Contains('MENU_ACTION:' + ($choice -eq '3'))) "Wrong navigation: $output" }
     }
     $output = @('1','local/demo') | & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'start_reposcout.ps1') 2>&1 | Out-String
@@ -49,7 +49,7 @@ try {
     Start-Sleep -Milliseconds 50
     @{repo_path='relative\invalid'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'reports\invalid\deployment_result.json') -Encoding UTF8
     $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $work 'continue_last_deployment.ps1') -OpenOnly -NoOpen -NoPause 2>&1 | Out-String
-    Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains($target) -and $output.Contains($validReport)) "Open-last failed to select a valid project directory: $output"
+    Assert-Menu ($LASTEXITCODE -eq 0 -and $output.Contains((Join-Path $work 'reports\invalid')) -and -not $output.Contains($target)) "Open-last failed to select latest report folder independently of source path: $output"
     foreach ($removed in @('打开上次部署目录.bat','继续未完成的部署（仅在程序提示时使用）.bat')) {
         Assert-Menu (-not (Test-Path -LiteralPath (Join-Path $source $removed))) "Duplicate root entry remains: $removed"
     }

@@ -5,7 +5,7 @@ function Read-RepoWayfinderMainMenu {
     Write-Host ''
     Write-Host (Get-RepoWayfinderUiText '[1] 部署新项目' '[1] Deploy a project')
     Write-Host (Get-RepoWayfinderUiText '[2] 继续上次运行' '[2] Continue last run')
-    Write-Host (Get-RepoWayfinderUiText '[3] 打开上次部署目录' '[3] Open last project folder')
+    Write-Host (Get-RepoWayfinderUiText '[3] 打开上次运行结果（教程/日志）' '[3] Open last run results (guides/logs)')
     Write-Host (Get-RepoWayfinderUiText '[4] 部署历史' '[4] Deployment history')
     Write-Host (Get-RepoWayfinderUiText '[5] 设置' '[5] Settings')
     Write-Host (Get-RepoWayfinderUiText '[6] 打包已验证项目' '[6] Package a verified project')
