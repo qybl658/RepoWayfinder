@@ -87,3 +87,7 @@ RepoWayfinder 使用 [Apache-2.0](LICENSE)。第三方项目和随包依赖按�
 部署新项目时直接回车，会选择 [gabrielecirulli/2048](https://github.com/gabrielecirulli/2048)。这是可在浏览器里用方向键玩的数字合并游戏，不需要 API Key、模型下载、Docker 或 Node。RepoWayfinder 复用自己的 Python，在本机启动静态网页服务并检查 `/index.html`；验证结束后会停止服务。在结果目录双击 `start_demo.bat`，保持窗口打开，再打开窗口里的本机链接即可游玩。
 
 静态网页路线只接收根目录已有 `index.html`、引用的脚本与样式文件已存在且无构建/后端清单的项目。需要打包构建或服务端的项目继续使用对应部署路线。
+
+### Windows 命令路径
+
+BAT 入口和导出的体验包会在每次启动时自动补齐 Windows 命令目录及包内运行时路径，不要求手动修改 PATH，也不写系统或用户环境变量。体验包另附 `0-检查命令路径.bat`。缺少程序本身时仍需按安装提示准备；PATH 配置不能替代安装。

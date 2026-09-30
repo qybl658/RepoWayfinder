@@ -400,6 +400,7 @@ def _write_launchers(stage: Path, entrypoint: PythonEntrypoint, mode: str,
     (stage / "start.ps1").write_text("\n".join(launch) + "\n", encoding="utf-8-sig")
     _bat(stage / "1-首次配置环境.bat", "setup.ps1")
     _bat(stage / "2-启动项目.bat", "start.ps1")
+    _bat(stage / "0-检查命令路径.bat", "configure_command_path.ps1")
     if has_config:
         config = [
             "$ErrorActionPreference = 'Stop'",
@@ -418,8 +419,10 @@ def _write_launchers(stage: Path, entrypoint: PythonEntrypoint, mode: str,
 
 
 def _bat(path: Path, script: str) -> None:
-    body = ["@echo off", "chcp 65001 >nul", "setlocal", "set \"SCRIPT_DIR=%~dp0\"",
-            '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%' + script + '"',
+    for helper in ("command_path.cmd", "configure_command_path.ps1", "run_with_command_path.ps1"):
+        shutil.copyfile(Path(__file__).parent / helper, path.parent / helper)
+    body = ["@echo off", "setlocal", 'call "%~dp0command_path.cmd"', '"%SystemRoot%\\System32\\chcp.com" 65001 >nul', "set \"SCRIPT_DIR=%~dp0\"",
+            '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%run_with_command_path.ps1" -Script "%SCRIPT_DIR%' + script + '"',
             "set \"CODE=%ERRORLEVEL%\"", "if not \"%CODE%\"==\"0\" (",
             "  echo 操作未完成，请查看上方原因。", "  pause", ")", "exit /b %CODE%"]
     path.write_bytes(("\r\n".join(body) + "\r\n").encode("utf-8"))

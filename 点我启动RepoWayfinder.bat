@@ -1,12 +1,14 @@
 @echo off
-chcp 65001 >nul
+setlocal
+call "%~dp0command_path.cmd"
+"%SystemRoot%\System32\chcp.com" 65001 >nul
 title RepoWayfinder Launcher
 echo RepoWayfinder launcher
 echo.
 echo First run or broken environment: RepoWayfinder will auto-install/repair .reposcout-venv.
 echo It does not modify global Python or system environment variables.
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_reposcout.ps1" %*
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_reposcout.ps1" %*
 set "CODE=%ERRORLEVEL%"
 if not "%CODE%"=="0" (
   echo.
