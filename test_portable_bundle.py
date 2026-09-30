@@ -57,7 +57,8 @@ class BundleTests(unittest.TestCase):
 
     def _run_bat(self, bundle: Path, name: str) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
-        env["PATH"] = os.path.join(os.environ["SystemRoot"], "System32")
+        env["PATH"] = ""
+        env["PATHEXT"] = ""
         return subprocess.run([os.path.join(os.environ["SystemRoot"], "System32", "cmd.exe"),
                                "/d", "/c", str(bundle / name)],
                               env=env, cwd=self.root, capture_output=True, text=True,
@@ -266,7 +267,8 @@ class BundleTests(unittest.TestCase):
             "if ($p.Groups.Count -lt 1) { exit 4 }; 'CONFIG_PLAN_OK'"
         )
         env = os.environ.copy()
-        env["PATH"] = os.path.join(os.environ["SystemRoot"], "System32")
+        env["PATH"] = ""
+        env["PATHEXT"] = ""
         checked = subprocess.run([ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
                                  env=env, capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", timeout=30)
