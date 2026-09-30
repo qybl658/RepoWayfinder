@@ -69,7 +69,7 @@ function Update-RepoWayfinderCommandPath {
         Write-Host '这一步只补当前这次启动能用的命令路径，不改系统设置，也不写启动项。'
         Write-Host '简单来说：就算这台电脑没配好 Path，后面的脚本也能找到 PowerShell 和本包自带的程序。'
         $next = ''
-        foreach ($name in @('1-首次配置环境.bat', '2-启动DSH.bat', '点我启动RepoWayfinder.bat')) {
+        foreach ($name in @('点我开始使用.bat', '点我启动DSH.bat', '点我启动RepoWayfinder.bat')) {
             if (Test-Path -LiteralPath (Join-Path $BundleRoot $name) -PathType Leaf) { $next = $name; break }
         }
         if ($next) { Write-Host "接下来双击 $next" }

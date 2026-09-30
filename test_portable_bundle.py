@@ -172,8 +172,8 @@ class BundleTests(unittest.TestCase):
         moved = self.root / "adapter folder 中文"
         with zipfile.ZipFile(output) as zipped:
             zipped.extractall(moved)
-        self.assertEqual(self._run_bat(moved, "1-首次配置环境.bat").returncode, 0)
-        completed = self._run_bat(moved, "2-启动项目.bat")
+        self.assertEqual(self._run_bat(moved, "点我开始使用.bat").returncode, 0)
+        completed = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("REVIEWED_ADAPTER_OK", completed.stdout)
 
@@ -185,7 +185,7 @@ class BundleTests(unittest.TestCase):
         self.assertFalse((moved / "source" / ".env").exists())
         self.assertFalse((moved / "source" / "run.md").exists())
         self.assertTrue((moved / "source" / "LICENSE").is_file())
-        completed = self._run_bat(moved, "2-启动项目.bat")
+        completed = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("BUNDLE_FIXTURE_OK", completed.stdout)
         self.assertIn("INTERPRETER=", completed.stdout)
@@ -202,7 +202,7 @@ class BundleTests(unittest.TestCase):
         moved = self.root / "module folder 中文"
         with zipfile.ZipFile(result.zip_path) as zipped:
             zipped.extractall(moved)
-        completed = self._run_bat(moved, "2-启动项目.bat")
+        completed = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("MODULE_ENTRY_OK", completed.stdout)
 
@@ -212,11 +212,11 @@ class BundleTests(unittest.TestCase):
         with zipfile.ZipFile(result.zip_path) as zipped:
             zipped.extractall(moved)
         self.assertFalse((moved / "runtime" / "python" / "python.exe").exists())
-        first = self._run_bat(moved, "1-首次配置环境.bat")
+        first = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        second = self._run_bat(moved, "1-首次配置环境.bat")
+        second = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        completed = self._run_bat(moved, "2-启动项目.bat")
+        completed = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("BUNDLE_FIXTURE_OK", completed.stdout)
 
@@ -254,7 +254,7 @@ class BundleTests(unittest.TestCase):
             zipped.extractall(moved)
         self.assertTrue((moved / "配置项目密钥.bat").is_file())
         self.assertFalse((moved / "source" / ".env").exists())
-        setup = self._run_bat(moved, "1-首次配置环境.bat")
+        setup = self._run_bat(moved, "点我开始使用.bat")
         self.assertEqual(setup.returncode, 0, setup.stdout + setup.stderr)
         self.assertTrue((moved / "source" / ".env").is_file())
         self.assertNotIn("synthetic-private-value", (moved / "source" / ".env").read_text())

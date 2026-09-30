@@ -389,7 +389,7 @@ def _write_launchers(stage: Path, entrypoint: PythonEntrypoint, mode: str,
         "$ErrorActionPreference = 'Stop'",
         "$root = Split-Path -Parent $MyInvocation.MyCommand.Path",
         "$python = Join-Path $root 'runtime\\python\\python.exe'",
-        "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw '请先双击 1-首次配置环境.bat。' }",
+        "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw '包内运行环境不完整，请重新解压后双击 点我开始使用.bat。' }",
         "$source = Join-Path $root 'source'",
         "Set-Location -LiteralPath (Join-Path $source " + cwd + ")",
         "$entryArgs = @(" + args + ")",
@@ -398,15 +398,13 @@ def _write_launchers(stage: Path, entrypoint: PythonEntrypoint, mode: str,
         "exit $LASTEXITCODE",
     ]
     (stage / "start.ps1").write_text("\n".join(launch) + "\n", encoding="utf-8-sig")
-    _bat(stage / "1-首次配置环境.bat", "setup.ps1")
-    _bat(stage / "2-启动项目.bat", "start.ps1")
-    _bat(stage / "0-检查命令路径.bat", "configure_command_path.ps1")
+    _write_one_click_launcher(stage)
     if has_config:
         config = [
             "$ErrorActionPreference = 'Stop'",
             "$root = Split-Path -Parent $MyInvocation.MyCommand.Path",
             "$python = Join-Path $root 'runtime\\python\\python.exe'",
-            "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw '请先双击 1-首次配置环境.bat。' }",
+            "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { & (Join-Path $root 'setup.ps1') }",
             "Write-Host '项目配置提示：只填写当前需要的功能；留空保留已有值。'",
             *["Write-Host " + _ps_literal(f"{hint.field}：{hint.purpose}（{'必需' if hint.required else '可选'}）" +
                                             (f" 申请入口：{hint.application_url}" if hint.application_url else ""))
@@ -416,6 +414,20 @@ def _write_launchers(stage: Path, entrypoint: PythonEntrypoint, mode: str,
         ]
         (stage / "config.ps1").write_text("\n".join(config) + "\n", encoding="utf-8-sig")
         _bat(stage / "配置项目密钥.bat", "config.ps1")
+
+
+def _write_one_click_launcher(stage: Path) -> None:
+    (stage / "launch.ps1").write_text("\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        "& (Join-Path $PSScriptRoot 'setup.ps1')",
+        "if (-not $?) { exit 1 }",
+        ". (Join-Path $PSScriptRoot 'configure_command_path.ps1')",
+        "Update-RepoWayfinderCommandPath -BundleRoot $PSScriptRoot -Quiet",
+        "& (Join-Path $PSScriptRoot 'start.ps1')",
+        "exit $LASTEXITCODE",
+    ]) + "\n", encoding="utf-8-sig")
+    _bat(stage / "点我开始使用.bat", "launch.ps1")
+    _bat(stage / "遇到问题-检查命令路径.bat", "configure_command_path.ps1")
 
 
 def _bat(path: Path, script: str) -> None:
@@ -466,7 +478,7 @@ def _add_config_helper(stage: Path, hints: Sequence[ConfigHint],
     for filename in ("project_config.py", "project_configuration.ps1"):
         shutil.copy2(helper_root / filename, tools / filename)
     if hints:
-        lines = ["# 项目配置字段说明", "", "先运行 `1-首次配置环境.bat`，再双击 `配置项目密钥.bat`。只填写需要启用的功能，留空保留已有值。", ""]
+        lines = ["# 项目配置字段说明", "", "需要时双击 `配置项目密钥.bat`，会自动准备环境。只填写需要启用的功能，留空保留已有值。", ""]
         for hint in hints:
             lines.append(f"- `{hint.field}`（{'必需' if hint.required else '可选'}）：{hint.purpose}" +
                          (f"；申请入口：{hint.application_url}" if hint.application_url else ""))
@@ -549,8 +561,8 @@ def _write_deployment_plan(stage: Path, report: dict, source: Path,
     exported = {"schema": 1, "project": report["repo"],
                 "verified_plan": {"source": source_name, "steps": steps,
                                   "note": "这些是原部署验证步骤；其中的本地测试样例可能未包含在发行包中，不作为本包启动命令。"},
-                "bundle_launch": {"mode": mode, "first_setup": "1-首次配置环境.bat",
-                                  "start": "2-启动项目.bat", "entrypoint": {
+                "bundle_launch": {"mode": mode, "first_setup": "点我开始使用.bat",
+                                  "start": "点我开始使用.bat", "entrypoint": {
                                       "kind": entrypoint.kind, "value": entrypoint.value,
                                       "args": list(entrypoint.args), "cwd": entrypoint.cwd}},
                 "environment": "包内 Python 与依赖；不修改系统 PATH、全局配置或启动项。"}
@@ -576,8 +588,8 @@ def _check_entrypoint_in_bundle(stage: Path, entrypoint: PythonEntrypoint) -> No
 def _write_guide(stage: Path, report: dict, mode: str, hints: Sequence[ConfigHint],
                  has_config: bool, entrypoint: PythonEntrypoint) -> None:
     lines = [f"# {report['repo']} — Windows x64 便携包", "",
-             "1. 双击 `1-首次配置环境.bat`。可重复运行；只在本文件夹准备包内环境。",
-             "2. 双击 `2-启动项目.bat`。保持窗口打开，使用完按 Ctrl+C 或关闭窗口。",
+             "1. 双击 `点我开始使用.bat`：自动准备包内环境并启动。以后仍点这一个入口。",
+             "2. 保持窗口打开，使用完按 Ctrl+C 或关闭窗口。命令路径随每次启动自动配置。",
              "", "包内包含项目源码、许可与 Python 运行环境。首次准备不写全局设置或启动项。"]
     if mode == "bootstrap":
         lines.append("首次准备会在本文件夹解压已随包附带的 Python 与依赖，无需联网安装。")
