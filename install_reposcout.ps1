@@ -463,7 +463,7 @@ function Read-SecretOrSkip([string]$prompt) {
         $secret = Read-Host -AsSecureString
         return Convert-SecureStringToPlainText $secret
     } catch {
-        return Read-Host
+        throw 'Hidden secret input is unavailable. Existing configuration was not changed.'
     }
 }
 
@@ -517,32 +517,115 @@ function Convert-ExistingRepoWayfinderEnvToDpapi {
     Write-RepoWayfinderLocalEnv $githubToken $aiKey $aiModel $false
 }
 
-function Write-RepoWayfinderLocalEnv([string]$githubToken, [string]$aiKey, [string]$aiModel, [bool]$skipped, [bool]$clearExisting=$false) {
+function Write-RepoWayfinderLocalEnv([string]$githubToken, [string]$aiKey, [string]$aiModel, [bool]$skipped, [bool]$clearExisting=$false, [ValidateSet('all','github','ai')][string]$updateOnly='all') {
     $lines = @(
         '# RepoWayfinder local API configuration.',
-        '# SECURITY: Secret values are stored with Windows DPAPI for the current Windows user when possible.',
+        '# SECURITY: Secret values are encrypted with Windows DPAPI for the current Windows user.',
         '# If DPAPI cannot be used, rerun install_reposcout.ps1 -ForceApiSetup instead of editing this file by hand.',
         '# Delete this file to remove local RepoWayfinder API configuration.',
         ''
     )
+    if ((Test-Path -LiteralPath $localEnvPath) -and -not $clearExisting) {
+        $replaceKeys = @('REPOSCOUT_API_SETUP_SKIPPED')
+        if ($updateOnly -in @('all','github')) { $replaceKeys += @('GITHUB_TOKEN','GITHUB_TOKEN_DPAPI') }
+        if ($updateOnly -in @('all','ai')) { $replaceKeys += @('OPENROUTER_API_KEY','OPENROUTER_API_KEY_DPAPI','DEEPSEEK_API_KEY','DEEPSEEK_API_KEY_DPAPI','REPOSCOUT_AI_MODEL','OPENROUTER_MODEL','DEEPSEEK_MODEL') }
+        $lines = @(Get-Content -LiteralPath $localEnvPath -Encoding UTF8 | Where-Object {
+            $entry = $_.Trim() -split '=', 2
+            $entry.Count -ne 2 -or $entry[0].Trim() -notin $replaceKeys
+        })
+    }
     if ($skipped) { $lines += 'REPOSCOUT_API_SETUP_SKIPPED=1' }
     $githubTokenProtected = Protect-RepoWayfinderSecret $githubToken
     $aiKeyProtected = Protect-RepoWayfinderSecret $aiKey
     if (-not [string]::IsNullOrWhiteSpace($githubTokenProtected)) { $lines += "GITHUB_TOKEN_DPAPI=$githubTokenProtected" }
-    elseif (-not [string]::IsNullOrWhiteSpace($githubToken)) { $lines += "GITHUB_TOKEN=$(Clean-EnvValue $githubToken)" }
+    elseif (-not [string]::IsNullOrWhiteSpace($githubToken)) { throw 'Could not encrypt the GitHub token. Existing configuration was not changed.' }
     if (-not [string]::IsNullOrWhiteSpace($aiKeyProtected)) { $lines += "OPENROUTER_API_KEY_DPAPI=$aiKeyProtected" }
-    elseif (-not [string]::IsNullOrWhiteSpace($aiKey)) { $lines += "OPENROUTER_API_KEY=$(Clean-EnvValue $aiKey)" }
+    elseif (-not [string]::IsNullOrWhiteSpace($aiKey)) { throw 'Could not encrypt the AI key. Existing configuration was not changed.' }
     if (-not [string]::IsNullOrWhiteSpace($aiModel)) { $lines += "REPOSCOUT_AI_MODEL=$(Clean-EnvValue $aiModel)" }
-    if ($clearExisting) {
-        Remove-Item -LiteralPath $localEnvPath -Force -ErrorAction SilentlyContinue
-        Get-ChildItem -LiteralPath $projectDir -Filter '.reposcout.env.backup-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
-    } elseif (Test-Path -LiteralPath $localEnvPath) {
-        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        Move-Item -LiteralPath $localEnvPath -Destination "$localEnvPath.backup-$timestamp"
+    $pendingPath = "$localEnvPath.pending-$([guid]::NewGuid().ToString('N'))"
+    try {
+        [IO.File]::WriteAllLines($pendingPath, [string[]]$lines, [Text.UTF8Encoding]::new($true))
+        if (Test-Path -LiteralPath $localEnvPath) {
+            $backupPath = "$localEnvPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$([guid]::NewGuid().ToString('N'))"
+            [IO.File]::Replace($pendingPath, $localEnvPath, $backupPath)
+        } else {
+            [IO.File]::Move($pendingPath, $localEnvPath)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $pendingPath) { Remove-Item -LiteralPath $pendingPath -Force }
     }
-    Set-Content -LiteralPath $localEnvPath -Value $lines -Encoding UTF8
+    if ($clearExisting) {
+        Get-ChildItem -LiteralPath $projectDir -Filter '.reposcout.env.backup-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
+    }
     Write-Host (Get-RepoWayfinderUiText "RepoWayfinder 本地 API 配置已写入：$localEnvPath" "Local RepoWayfinder API config written: $localEnvPath")
     Write-Host (Get-RepoWayfinderUiText '密钥值不会显示。不要分享 .reposcout.env。' 'Secret values are not printed. Do not share .reposcout.env.')
+}
+
+function Get-RepoWayfinderGitHubTokenUrl {
+    return 'https://github.com/settings/personal-access-tokens/new?name=RepoWayfinder&description=Read%20public%20GitHub%20repository%20metadata&expires_in=30'
+}
+
+function Test-RepoWayfinderGitHubToken([string]$token) {
+    $token = $token.Trim()
+    if ([string]::IsNullOrWhiteSpace($token) -or $token -match '\s') { return 'invalid' }
+    $previousTls = [Net.ServicePointManager]::SecurityProtocol
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $previousTls -bor [Net.SecurityProtocolType]::Tls12
+        $response = Invoke-WebRequest -Uri 'https://api.github.com/user' -Headers @{
+            Authorization = "Bearer $token"
+            Accept = 'application/vnd.github+json'
+            'User-Agent' = 'RepoWayfinder-Setup'
+        } -UseBasicParsing -TimeoutSec 15 -MaximumRedirection 0 -ErrorAction Stop
+        if ($response.StatusCode -eq 200) {
+            $account = $response.Content | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace([string]$account.login)) { return 'valid' }
+        }
+        return 'unavailable'
+    } catch {
+        $status = 0
+        if ($null -ne $_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($status -eq 401) { return 'invalid' }
+        if ($status -in @(403,429)) { return 'restricted' }
+        return 'unavailable'
+    } finally {
+        [Net.ServicePointManager]::SecurityProtocol = $previousTls
+    }
+}
+
+function Read-RepoWayfinderGitHubToken {
+    Write-Host (Get-RepoWayfinderUiText 'GitHub Token 用于公开仓库查询，可不配置。回车或取消会保留已有 Token。' 'GitHub token is optional for public repository queries. Skipping keeps the existing token.')
+    Write-Host (Get-RepoWayfinderUiText '[1] 打开申请页面（已填名称、用途和30天有效期）  [2] 已有 Token，直接粘贴  [0] 跳过' '[1] Open pre-filled creation page (30 days)  [2] Paste an existing token  [0] Skip')
+    do { $choice = Read-VisibleChoice (Get-RepoWayfinderUiText '请选择 1、2 或 0；回车跳过：' 'Choose 1, 2, or 0; Enter to skip:') } until ($choice -in @('1','2','0',''))
+    if ($choice -in @('0','')) { return $null }
+    if ($choice -eq '1') {
+        $url = Get-RepoWayfinderGitHubTokenUrl
+        Write-Host (Get-RepoWayfinderUiText '登录后，Repository access 保持 Public repositories；无需增加权限。确认有效期，点击 Generate token，复制生成的 Token 回到这里粘贴。' 'Sign in, keep Repository access at Public repositories, and add no permissions. Review expiration, select Generate token, then copy the token back here.')
+        Write-Host $url
+        try { Start-Process -FilePath $url -ErrorAction Stop | Out-Null }
+        catch { Write-Host (Get-RepoWayfinderUiText '未能打开浏览器，请复制上方网址手动打开。' 'Could not open the browser. Open the URL above manually.') }
+    }
+    while ($true) {
+        $token = (Read-SecretOrSkip (Get-RepoWayfinderUiText '粘贴 GitHub Token（输入隐藏）；回车取消并保留原配置：' 'Paste GitHub token (hidden); Enter cancels and keeps existing configuration:')).Trim()
+        if ([string]::IsNullOrWhiteSpace($token)) { return $null }
+        while ($true) {
+            Write-Host (Get-RepoWayfinderUiText '正在连接 GitHub 验证 Token…' 'Checking the token with GitHub...')
+            $status = Test-RepoWayfinderGitHubToken $token
+            if ($status -eq 'valid') {
+                Write-Host (Get-RepoWayfinderUiText 'GitHub Token 验证通过。' 'GitHub token verified.')
+                return $token
+            }
+            if ($status -eq 'invalid') {
+                Write-Host (Get-RepoWayfinderUiText 'Token 无效、已过期或复制不完整，尚未保存。' 'Token is invalid, expired, or incomplete. It has not been saved.')
+            } elseif ($status -eq 'restricted') {
+                Write-Host (Get-RepoWayfinderUiText 'GitHub 限流或拒绝了请求，暂时无法确认 Token 是否有效，尚未保存。' 'GitHub limited or denied the request. Token validity is unknown; it has not been saved.')
+            } else {
+                Write-Host (Get-RepoWayfinderUiText '暂时无法连接 GitHub 完成验证，请检查网络，尚未保存。' 'Could not complete verification with GitHub. Check your connection; nothing was saved.')
+            }
+            do { $retry = Read-VisibleChoice (Get-RepoWayfinderUiText '[1] 重试验证  [2] 重新粘贴  [0] 取消，保留原配置：' '[1] Retry verification  [2] Paste again  [0] Cancel and keep existing configuration:') } until ($retry -in @('1','2','0',''))
+            if ($retry -in @('0','')) { return $null }
+            if ($retry -eq '2') { break }
+        }
+    }
 }
 
 function Configure-RepoWayfinderApis {
@@ -553,6 +636,7 @@ function Configure-RepoWayfinderApis {
         return
     }
     if ($NoUI) {
+        if (Test-Path -LiteralPath $localEnvPath) { Write-Host 'No interactive API setup; existing configuration was kept.'; return }
         Write-Host 'No interactive API setup is available in -NoUI mode; recording a truthful no-key skip and continuing.'
         Write-RepoWayfinderLocalEnv -githubToken '' -aiKey '' -aiModel '' -skipped $true
         return
@@ -561,11 +645,6 @@ function Configure-RepoWayfinderApis {
     $hasExistingConfig = Test-Path -LiteralPath $localEnvPath
     Write-Host (Get-RepoWayfinderUiText 'RepoWayfinder API 配置与更换向导' 'RepoWayfinder API setup and replacement wizard')
     Write-Host (Get-RepoWayfinderUiText '完整功能推荐配置一个 AI key（DeepSeek 或 OpenRouter）；GitHub token 始终可选。' 'For full features, configure one AI key (DeepSeek or OpenRouter). GitHub token is always optional.')
-    Write-Host (Get-RepoWayfinderUiText '推荐平台：' 'Recommended services:')
-    Write-Host '  GitHub Token: https://github.com/settings/personal-access-tokens'
-    Write-Host '  DeepSeek API:  https://platform.deepseek.com/api_keys'
-    Write-Host '  OpenRouter:    https://openrouter.ai/settings/keys'
-    Write-Host ''
     Write-Host (Get-RepoWayfinderUiText '安全警告：API key 是秘密。不要发给别人，不要截图，不要提交 GitHub，不要放进报告。' 'Security: API keys are secrets. Do not share, screenshot, commit, or place them in reports.')
     Write-Host ''
     if ($hasExistingConfig) {
@@ -588,8 +667,20 @@ function Configure-RepoWayfinderApis {
             return
         }
     }
-    $githubToken = Read-SecretOrSkip (Get-RepoWayfinderUiText '可选：粘贴 GITHUB_TOKEN；不需要时直接回车' 'Optional: paste GITHUB_TOKEN, or press Enter to skip')
+    Write-Host (Get-RepoWayfinderUiText '[1] 仅配置 GitHub Token  [2] 仅配置 AI Key  [3] 两项都配置  [0] 取消' '[1] GitHub token only  [2] AI key only  [3] Configure both  [0] Cancel')
+    do { $scope = Read-VisibleChoice (Get-RepoWayfinderUiText '请选择本次要配置的项目：' 'Choose what to configure:') } until ($scope -in @('1','2','3','0'))
+    if ($scope -eq '0') { return }
+    $githubToken = $null
+    if ($scope -in @('1','3')) { $githubToken = Read-RepoWayfinderGitHubToken }
+    if ($scope -eq '1') {
+        if (-not [string]::IsNullOrWhiteSpace($githubToken)) {
+            Write-RepoWayfinderLocalEnv -githubToken $githubToken -aiKey '' -aiModel '' -skipped $false -updateOnly github
+        }
+        return
+    }
     Write-Host ''
+    Write-Host '  DeepSeek API: https://platform.deepseek.com/api_keys'
+    Write-Host '  OpenRouter:   https://openrouter.ai/settings/keys'
     Write-Host (Get-RepoWayfinderUiText 'AI API 平台：1=DeepSeek 官方（推荐中文用户），2=OpenRouter' 'AI API provider: 1=DeepSeek, 2=OpenRouter')
     do { $providerChoice = Read-VisibleChoice (Get-RepoWayfinderUiText '请输入 1 或 2；进入配置后不能用空输入静默跳过：' 'Enter 1 or 2. After entering setup, empty input cannot silently skip:') } until ($providerChoice -in @('1','2'))
     $aiKey = ''
@@ -605,7 +696,8 @@ function Configure-RepoWayfinderApis {
         }
         $aiModel = 'deepseek/deepseek-chat'
     }
-    Write-RepoWayfinderLocalEnv -githubToken $githubToken -aiKey $aiKey -aiModel $aiModel -skipped $false
+    $updateOnly = if ([string]::IsNullOrWhiteSpace($githubToken)) { 'ai' } else { 'all' }
+    Write-RepoWayfinderLocalEnv -githubToken $githubToken -aiKey $aiKey -aiModel $aiModel -skipped $false -updateOnly $updateOnly
 }
 
 Write-Host (Get-RepoWayfinderUiText 'RepoWayfinder 安装器' 'RepoWayfinder installer')
